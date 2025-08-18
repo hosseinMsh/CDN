@@ -18,7 +18,7 @@ from .utils import (
     sanitize_rel_path,
     build_storage_path,
     ensure_unique,
-    guess_mime,
+    guess_mime, fs_base, safe_folder_name,
 )
 
 # ---------- UI ----------
@@ -68,41 +68,7 @@ def api_assets(request):
 
     return JsonResponse({'ok': True, 'items': data})
 
-@login_required
-@require_GET
-def api_browse(request):
-    """List folders/files one level under rel_path for current user."""
-    bucket = (request.GET.get('bucket') or 'assets').strip()
-    rel = sanitize_rel_path(request.GET.get('rel_path') or '')
 
-    qs = Asset.objects.filter(owner=request.user, bucket=bucket)
-
-    # Child folders directly below rel
-    prefix = f"{rel}/" if rel else ''
-    child_candidates = qs.exclude(rel_path='').values_list('rel_path', flat=True)
-    folders = set()
-    for p in child_candidates:
-        if not p.startswith(prefix):
-            continue
-        rest = p[len(prefix):]
-        if not rest:
-            continue
-        first = rest.split('/', 1)[0]
-        if '/' in rest:
-            folders.add(first)
-    folders = sorted(folders)
-
-    # Files directly in rel
-    files_qs = qs.filter(rel_path=rel)
-    files = [{
-        'name': a.original_name,
-        'size': a.size,
-        'mime': a.mime,
-        'url': a.public_url,
-        'created_at': a.created_at.isoformat(),
-    } for a in files_qs]
-
-    return JsonResponse({'ok': True, 'path': rel, 'folders': folders, 'files': files})
 
 @login_required
 @csrf_exempt
@@ -216,3 +182,174 @@ def api_file_private(request):
     resp['X-Accel-Redirect'] = internal
     resp['Content-Type'] = a.mime
     return resp
+
+
+
+
+@login_required
+@require_GET
+def api_browse(request):
+    """
+    List folders/files one level under rel_path for current user.
+    Now also lists empty folders that exist on disk.
+    """
+    bucket = (request.GET.get('bucket') or 'assets').strip()
+    rel = sanitize_rel_path(request.GET.get('rel_path') or '')
+
+    qs = Asset.objects.filter(owner=request.user, bucket=bucket)
+
+    # Folders from DB (derived from rel_path deeper levels)
+    prefix = f"{rel}/" if rel else ''
+    child_candidates = qs.exclude(rel_path='').values_list('rel_path', flat=True)
+    folders_db = set()
+    for p in child_candidates:
+        if not p.startswith(prefix):
+            continue
+        rest = p[len(prefix):]
+        if not rest:
+            continue
+        # only count as folder if there's deeper level
+        if '/' in rest:
+            first = rest.split('/', 1)[0]
+            folders_db.add(first)
+
+    # Folders from filesystem (empty-folders support)
+    base = fs_base(request.user, bucket, rel)
+    folders_fs = set()
+    try:
+        for entry in base.iterdir():
+            if entry.is_dir():
+                folders_fs.add(entry.name)
+    except FileNotFoundError:
+        pass
+
+    folders = sorted(folders_db | folders_fs)
+
+    # Files directly in rel (from DB, fast)
+    files_qs = qs.filter(rel_path=rel)
+    files = [{
+        'name': a.original_name,
+        'size': a.size,
+        'mime': a.mime,
+        'url': a.public_url,
+        'created_at': a.created_at.isoformat(),
+    } for a in files_qs]
+
+    return JsonResponse({'ok': True, 'path': rel, 'folders': folders, 'files': files})
+
+
+# ---------- New: mkdir ----------
+
+@login_required
+@require_POST
+def api_mkdir(request):
+    """
+    POST /api/mkdir
+    JSON: { "bucket":"assets", "rel_path":"current/path", "name":"NewFolder" }
+    Creates folder at <rel_path>/<name>
+    """
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+    except Exception:
+        return JsonResponse({'ok': False, 'error': 'invalid json'}, status=400)
+
+    bucket = (data.get('bucket') or 'assets').strip()
+    rel = sanitize_rel_path(data.get('rel_path') or '')
+    name = safe_folder_name(data.get('name') or '')
+
+    target = fs_base(request.user, bucket, rel) / name
+    if target.exists():
+        return JsonResponse({'ok': False, 'error': 'folder exists'}, status=409)
+
+    target.mkdir(parents=True, exist_ok=False)
+    return JsonResponse({'ok': True})
+
+
+# ---------- New: rename / move file ----------
+
+@login_required
+@require_POST
+def api_rename(request):
+    """
+    POST /api/rename
+    JSON: {
+      "bucket":"assets",
+      "old_rel_path":"a/b",
+      "old_name":"file.css",
+      "new_rel_path":"a/c",  # optional; default old_rel_path
+      "new_name":"file2.css" # optional; default old_name
+    }
+    """
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+    except Exception:
+        return JsonResponse({'ok': False, 'error': 'invalid json'}, status=400)
+
+    bucket = (data.get('bucket') or 'assets').strip()
+
+    old_rel = sanitize_rel_path(data.get('old_rel_path') or '')
+    new_rel = sanitize_rel_path(data.get('new_rel_path') or old_rel)
+
+    old_name = safe_filename(data.get('old_name') or '')
+    new_name = safe_filename(data.get('new_name') or old_name)
+
+    # Ensure asset exists and is owned by user
+    try:
+        a = Asset.objects.get(owner=request.user, bucket=bucket, rel_path=old_rel, original_name=old_name)
+    except Asset.DoesNotExist:
+        return JsonResponse({'ok': False, 'error': 'not found'}, status=404)
+
+    old_p = build_storage_path(request.user, bucket, old_rel, old_name)
+    if not old_p.exists():
+        return JsonResponse({'ok': False, 'error': 'file missing on disk'}, status=404)
+
+    # Destination
+    new_p = build_storage_path(request.user, bucket, new_rel, new_name)
+    if new_p.exists():
+        return JsonResponse({'ok': False, 'error': 'target exists'}, status=409)
+
+    new_p.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(old_p, new_p)
+
+    # Update DB
+    a.rel_path = new_rel
+    a.original_name = new_name
+    a.save(update_fields=['rel_path', 'original_name'])
+
+    return JsonResponse({'ok': True})
+
+
+# ---------- New: delete file ----------
+
+@login_required
+@require_POST
+def api_delete(request):
+    """
+    POST /api/delete
+    JSON: { "bucket":"assets", "rel_path":"a/b", "name":"file.css" }
+    Deletes file from disk and DB.
+    """
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+    except Exception:
+        return JsonResponse({'ok': False, 'error': 'invalid json'}, status=400)
+
+    bucket = (data.get('bucket') or 'assets').strip()
+    rel = sanitize_rel_path(data.get('rel_path') or '')
+    name = safe_filename(data.get('name') or '')
+
+    try:
+        a = Asset.objects.get(owner=request.user, bucket=bucket, rel_path=rel, original_name=name)
+    except Asset.DoesNotExist:
+        return JsonResponse({'ok': False, 'error': 'not found'}, status=404)
+
+    p = build_storage_path(request.user, bucket, rel, name)
+    try:
+        if p.exists():
+            p.unlink()
+    except Exception:
+        # If deletion fails on FS, do not delete DB to avoid ghost references
+        return JsonResponse({'ok': False, 'error': 'fs delete failed'}, status=500)
+
+    a.delete()
+    return JsonResponse({'ok': True})
