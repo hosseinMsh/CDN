@@ -20,7 +20,7 @@ from .utils import (
 # ----------
 # Web UI
 # ----------
-
+@login_required(login_url=settings.LOGIN_URL)
 def dashboard(request):
     """Simple modern dashboard: upload form + recent assets."""
     return render(request, 'core/dashboard.html')
