@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block title %}Sign in – EdgeCDN{% endblock %}
+{% block body %}
+    <div class="min-h-screen grid place-items-center p-6">
+        <form method="post" class="w-full max-w-sm bg-white rounded-2xl p-6 shadow">
+            {% csrf_token %}
+            <h1 class="text-xl font-semibold mb-4">Sign in</h1>
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-sm mb-1">Username</label>
+                    <input name="username" class="w-full border rounded-lg px-3 py-2" autofocus/>
+                </div>
+                <div>
+                    <label class="block text-sm mb-1">Password</label>
+                    <input type="password" name="password" class="w-full border rounded-lg px-3 py-2"/>
+                </div>
+                <label class="flex items-center gap-2 text-sm text-slate-600">
+                    <input type="checkbox" name="remember" class="rounded border-slate-300">
+                    remember me
+                </label>
+
+            </div>
+            {% if form.errors %}
+                <p class="text-red-600 text-sm mt-2">Invalid credentials.</p>
+            {% endif %}
+            <button class="mt-4 w-full bg-slate-900 text-white py-2 rounded-lg">Sign in</button>
+        </form>
+    </div>
+{% endblock %}
