@@ -7,3 +7,5 @@
 out
 gen
 .env
+db.sqlite3
+*/migrations/00*
