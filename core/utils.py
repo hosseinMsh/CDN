@@ -32,15 +32,35 @@ def sanitize_rel_path(rel_path: str) -> str:
             raise ValueError('invalid characters in rel_path')
     return '/'.join(parts)
 
-# ---------- Storage paths ----------
-
-def build_storage_path(owner, bucket: str, rel_path: str, filename: str) -> Path:
+def safe_folder_name(name: str) -> str:
     """Filesystem path: CDN_ROOT/<name_spase>/<bucket>/<rel_path>/filename"""
-    ns = getattr(owner, 'name_spase', owner.username)
+    name = name.strip().strip('/').replace('\\','')
+    if not name:
+        raise ValueError('invalid folder name')
+    if '..' in name or '/' in name:
+        raise ValueError('invalid folder name')
+    if SAFE_NAME_RE.search(name):
+        raise ValueError('invalid folder name')
+    return name
+
+def ns_base(owner) -> str:
+    return getattr(owner, 'name_spase', owner.username)
+
+def fs_base(owner, bucket: str, rel_path: str = '') -> Path:
+    """
+    Base directory in filesystem for user's namespace.
+    CDN_ROOT/<name_spase>/<bucket>/<rel_path>/
+    """
     root: Path = settings.CDN_ROOT
-    base = root / ns / bucket
+    base = root / ns_base(owner) / bucket
     if rel_path:
         base = base / rel_path
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+def build_storage_path(owner, bucket: str, rel_path: str, filename: str) -> Path:
+    """"""
+    base = fs_base(owner, bucket, rel_path)
     p = base / filename
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
