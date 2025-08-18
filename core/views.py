@@ -6,6 +6,7 @@ from django.db.models import Q
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
+from django.contrib.auth.decorators import login_required
 
 from .models import Asset, AllowedExtension
 from .utils import (
@@ -50,7 +51,7 @@ def api_assets(request):
     ]
     return JsonResponse({'ok': True, 'items': data})
 
-@LOGIN_REQUIRED
+@login_required
 def api_allowed_extensions(request):
     exts = AllowedExtension.objects.filter(enabled=True).order_by('ext')
     return JsonResponse({'ok': True, 'items': [f".{e.ext}" for e in exts]})
