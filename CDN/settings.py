@@ -27,6 +27,8 @@ SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "unsafe-secret-key")
 DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() == "true"
 ALLOWED_HOSTS = [h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", "*").split(",")]
 
+CORS_ALLOWED_ORIGINS = [h.strip() for h in os.getenv("DJANGO_CORS_ALLOWED_ORIGINS", "*").split(",")]
+CSRF_TRUSTED_ORIGINS = [h.strip() for h in os.getenv("DJANGO_CSRF_TRUSTED_ORIGINS", "*").split(",")]
 # SECURITY WARNING: don't run with debug turned on in production!
 
 
