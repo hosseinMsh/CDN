@@ -1,144 +1,166 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>EdgeCDN Dashboard</title>
-  <!-- Tailwind via CDN for simplicity -->
-  <script src="/static/js/tailwindcss.js"></script>
-{#  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>#}
-  <style>
-    /* Subtle card shadow and smooth transitions */
-    .card { box-shadow: 0 10px 25px rgba(0,0,0,.06); }
-  </style>
-</head>
-<body class="bg-slate-50 text-slate-800">
-  <div class="max-w-6xl mx-auto p-6">
-    <header class="flex items-center justify-between mb-8">
-      <h1 class="text-2xl md:text-3xl font-bold tracking-tight">EdgeCDN</h1>
-      <a href="/admin/" class="text-sm px-3 py-2 rounded-lg bg-slate-900 text-white hover:bg-black">Admin</a>
-    </header>
-
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <!-- Upload card -->
-      <section class="lg:col-span-1 bg-white rounded-2xl card p-6">
-        <h2 class="font-semibold text-lg mb-4">Upload asset</h2>
-        <form id="uploadForm" class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium mb-1">Bucket</label>
-            <input name="bucket" id="bucket" value="assets" class="w-full rounded-xl border border-slate-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-300" />
-          </div>
-          <div>
-            <label class="block text-sm font-medium mb-1">File</label>
-            <input type="file" id="file" name="file" class="w-full" required />
-            <p id="extInfo" class="text-xs text-slate-500 mt-2">Allowed: loading…</p>
-          </div>
-          <div class="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-            <div id="bar" class="h-2 w-0 bg-slate-900 transition-all"></div>
-          </div>
-          <button class="w-full rounded-xl bg-slate-900 text-white py-2 hover:bg-black">Upload</button>
-          <p id="msg" class="text-sm"></p>
-        </form>
-      </section>
-
-      <!-- Recent assets -->
-      <section class="lg:col-span-2 bg-white rounded-2xl card p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="font-semibold text-lg">Recent assets</h2>
-          <input id="q" placeholder="Search…" class="rounded-xl border border-slate-200 px-3 py-2" />
-        </div>
-        <div class="overflow-x-auto">
-          <table class="min-w-full text-sm">
-            <thead>
-              <tr class="text-left text-slate-500">
-                <th class="py-2 pr-4">Bucket</th>
-                <th class="py-2 pr-4">Name</th>
-                <th class="py-2 pr-4">Size</th>
-                <th class="py-2 pr-4">MIME</th>
-                <th class="py-2 pr-4">Created</th>
-                <th class="py-2 pr-4">URL</th>
-              </tr>
-            </thead>
-            <tbody id="rows"></tbody>
-          </table>
-        </div>
-      </section>
+{% extends 'base.html' %}
+{% block title %}Dashboard – EdgeCDN{% endblock %}
+{% block body %}
+<div class="max-w-6xl mx-auto p-6">
+  <header class="flex items-center justify-between mb-8">
+    <h1 class="text-2xl md:text-3xl font-bold">EdgeCDN</h1>
+    <div class="flex items-center gap-3">
+      <span class="text-sm text-slate-600">{{ request.user.username }} · {{ request.user.name_spase }}</span>
+      <a href="/accounts/logout/" class="text-sm px-3 py-2 rounded-lg bg-slate-900 text-white">Logout</a>
     </div>
+  </header>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Upload card -->
+    <section class="lg:col-span-1 bg-white rounded-2xl p-6 shadow">
+      <h2 class="font-semibold text-lg mb-4">Upload</h2>
+      <form id="uploadForm" class="space-y-4">
+        <div class="grid grid-cols-1 gap-3">
+          <div>
+            <label class="block text-sm">Bucket</label>
+            <input id="bucket" value="assets" class="w-full border rounded-lg px-3 py-2" />
+          </div>
+          <div>
+            <label class="block text-sm">Path (optional)</label>
+            <input id="rel_path" placeholder="e.g. app/css" class="w-full border rounded-lg px-3 py-2" />
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm">Files</label>
+          <input type="file" id="files" multiple class="w-full" required />
+          <p id="extInfo" class="text-xs text-slate-500 mt-2">Allowed: loading…</p>
+        </div>
+        <div class="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+          <div id="bar" class="h-2 w-0 bg-slate-900 transition-all"></div>
+        </div>
+        <button class="w-full bg-slate-900 text-white py-2 rounded-lg">Upload</button>
+        <p id="msg" class="text-sm"></p>
+      </form>
+    </section>
+
+    <!-- Browser + list -->
+    <section class="lg:col-span-2 bg-white rounded-2xl p-6 shadow">
+      <div class="flex items-center justify-between mb-4 gap-2">
+        <h2 class="font-semibold text-lg">Your files</h2>
+        <div class="flex gap-2">
+          <input id="bucketFilter" value="assets" class="border rounded-lg px-3 py-2" />
+          <input id="path" placeholder="path (click folders below)" class="border rounded-lg px-3 py-2" />
+          <input id="q" placeholder="search" class="border rounded-lg px-3 py-2" />
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div>
+          <h3 class="text-sm text-slate-500 mb-1">Folders</h3>
+          <div id="folders" class="border rounded-lg p-3 min-h-[120px]"></div>
+        </div>
+        <div>
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm text-slate-500 mb-1">Files</h3>
+            <button id="zipBtn" class="text-sm px-3 py-1 bg-slate-900 text-white rounded">Download ZIP</button>
+          </div>
+          <div class="overflow-x-auto border rounded-lg">
+            <table class="min-w-full text-sm">
+              <thead>
+                <tr class="text-left text-slate-500">
+                  <th class="py-2 px-3">Select</th>
+                  <th class="py-2 px-3">Name</th>
+                  <th class="py-2 px-3">Size</th>
+                  <th class="py-2 px-3">MIME</th>
+                  <th class="py-2 px-3">Open</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
+</div>
 
-  <script>
-    const $ = (s) => document.querySelector(s);
-    const bar = $('#bar');
-    const msg = $('#msg');
+<script>
+const $ = s => document.querySelector(s);
+const bar = $('#bar'), msg = $('#msg');
 
-    async function loadExts(){
-      const r = await fetch('/api/allowed-extensions');
-      const j = await r.json();
-      $('#extInfo').textContent = j.ok ? `Allowed: ${j.items.join(', ')}` : 'Allowed: (error)';
-    }
+async function loadExts(){
+  const r = await fetch('/api/allowed-extensions'); const j = await r.json();
+  $('#extInfo').textContent = j.ok ? `Allowed: ${j.items.join(', ')}` : 'Allowed: (error)';
+}
 
-    async function loadAssets(){
-      const q = $('#q').value.trim();
-      const r = await fetch('/api/assets' + (q ? ('?q='+encodeURIComponent(q)) : ''));
-      const j = await r.json();
-      if(!j.ok) return;
-      const rows = j.items.map(a => `
-        <tr class="border-t">
-          <td class="py-2 pr-4">${a.bucket}</td>
-          <td class="py-2 pr-4" title="${a.original_name}">${a.hashed_name}</td>
-          <td class="py-2 pr-4">${formatSize(a.size)}</td>
-          <td class="py-2 pr-4">${a.mime}</td>
-          <td class="py-2 pr-4">${new Date(a.created_at).toLocaleString()}</td>
-          <td class="py-2 pr-4"><a class="text-sky-600 underline" href="${a.url}" target="_blank">open</a></td>
-        </tr>`).join('');
-      $('#rows').innerHTML = rows || '<tr><td class="py-3 text-slate-500" colspan="6">No items</td></tr>';
-    }
-
-    function formatSize(bytes){
-      const u = ['B', 'KB', 'MB', 'GB'];
-      let i = 0, n = bytes;
-      while(n >= 1024 && i < u.length - 1){ n/=1024; i++; }
-      return n.toFixed( (i===0)?0:1 ) + ' ' + u[i];
-    }
-
-    $('#q').addEventListener('input', () => { loadAssets(); });
-
-    $('#uploadForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      msg.textContent = '';
-      bar.style.width = '0%';
-
-      const file = $('#file').files[0];
-      if(!file){ msg.textContent = 'Choose a file.'; return; }
-
-      const fd = new FormData();
-      fd.append('file', file);
-
-      const bucket = $('#bucket').value || 'assets';
-      const url = '/api/upload?bucket=' + encodeURIComponent(bucket);
-
-      // Use fetch; show a fake progress bar to keep things simple
-      bar.style.transition = 'width .2s';
-      bar.style.width = '20%';
-
-      try {
-        const res = await fetch(url, { method: 'POST', body: fd });
-        bar.style.width = '80%';
-        const data = await res.json();
-        if(!data.ok){ throw new Error(data.error || 'Upload failed'); }
-        bar.style.width = '100%';
-        msg.textContent = 'Uploaded ✓';
-        msg.className = 'text-green-700';
-        await loadAssets();
-      } catch(err){
-        msg.textContent = err.message || String(err);
-        msg.className = 'text-red-700';
-        bar.style.width = '0%';
-      }
+async function browse(){
+  const bucket = $('#bucketFilter').value.trim() || 'assets';
+  const rel = $('#path').value.trim();
+  const url = `/api/browse?bucket=${encodeURIComponent(bucket)}&rel_path=${encodeURIComponent(rel)}`;
+  const r = await fetch(url); const j = await r.json(); if(!j.ok) return;
+  // folders
+  $('#folders').innerHTML = ([
+    rel ? `<button class="mr-2 text-sky-700 underline" data-up>⬆️ Up</button>` : '',
+    ...j.folders.map(f=>`<button class="mr-2 mb-2 px-2 py-1 rounded bg-slate-100 hover:bg-slate-200" data-folder="${f}">${f}</button>`)
+  ]).join('');
+  // files
+  $('#rows').innerHTML = j.files.map(a=>`
+    <tr class="border-t">
+      <td class="py-2 px-3"><input type="checkbox" data-name="${a.name}" /></td>
+      <td class="py-2 px-3">${a.name}</td>
+      <td class="py-2 px-3">${fmt(a.size)}</td>
+      <td class="py-2 px-3">${a.mime}</td>
+      <td class="py-2 px-3"><a class="text-sky-600 underline" href="${a.url}" target="_blank">open</a></td>
+    </tr>`).join('') || '<tr><td class="p-3 text-slate-500" colspan="5">No files</td></tr>';
+  $('#folders').querySelectorAll('[data-folder]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const cur = $('#path').value.trim();
+      $('#path').value = cur? `${cur}/${btn.dataset.folder}` : btn.dataset.folder;
+      browse();
     });
+  });
+  const up = $('#folders').querySelector('[data-up]');
+  if(up){ up.addEventListener('click', ()=>{ const cur = $('#path').value.trim(); $('#path').value = cur.split('/').slice(0,-1).join('/'); browse(); }); }
+}
 
-    loadExts();
-    loadAssets();
-  </script>
-</body>
-</html>
+function fmt(n){ const u=['B','KB','MB','GB']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return (i?n.toFixed(1):n)+" "+u[i]; }
+
+['input','change'].forEach(ev=>{ $('#q').addEventListener(ev, list); $('#bucketFilter').addEventListener(ev, browse); });
+
+$('#uploadForm').addEventListener('submit', async e=>{
+  e.preventDefault(); msg.textContent=''; bar.style.width='0%';
+  const bucket = $('#bucket').value || 'assets'; const rel = $('#rel_path').value.trim();
+  const files = $('#files').files; if(!files.length){ msg.textContent='Choose files.'; return; }
+  const fd = new FormData(); for(const f of files) fd.append('files', f);
+  const url = '/api/upload?bucket='+encodeURIComponent(bucket)+'&rel_path='+encodeURIComponent(rel);
+  bar.style.transition='width .2s'; bar.style.width='20%';
+  try{ const res = await fetch(url,{method:'POST',body:fd}); bar.style.width='80%'; const data = await res.json();
+    if(!data.ok){ throw new Error((data.items&&data.items.find(x=>!x.ok)?.error)||data.error||'Upload failed'); }
+    bar.style.width='100%'; msg.textContent='Uploaded ✓'; msg.className='text-green-700'; await browse();
+  }catch(err){ msg.textContent=err.message||String(err); msg.className='text-red-700'; bar.style.width='0%'; }
+});
+
+async function list(){
+  const q = $('#q').value.trim(); const bucket=$('#bucketFilter').value.trim(); const rel=$('#path').value.trim();
+  const p = new URLSearchParams(); if(q) p.set('q', q); if(bucket) p.set('bucket', bucket); if(rel) p.set('rel_path', rel);
+  const r = await fetch('/api/assets?'+p.toString()); const j = await r.json(); if(!j.ok) return;
+  $('#rows').innerHTML = j.items.map(a=>`
+    <tr class="border-t">
+      <td class="py-2 px-3"><input type="checkbox" data-name="${a.original_name}" /></td>
+      <td class="py-2 px-3">${a.original_name}</td>
+      <td class="py-2 px-3">${fmt(a.size)}</td>
+      <td class="py-2 px-3">${a.mime}</td>
+      <td class="py-2 px-3"><a class="text-sky-600 underline" href="${a.url}" target="_blank">open</a></td>
+    </tr>`).join('');
+}
+
+$('#zipBtn').addEventListener('click', async ()=>{
+  const bucket = $('#bucketFilter').value.trim()||'assets';
+  const rel = $('#path').value.trim();
+  const names = Array.from(document.querySelectorAll('#rows input[type="checkbox"]:checked')).map(x=>x.dataset.name);
+  if(!names.length) return;
+  const items = names.map(n=>({bucket, rel_path: rel, name: n}));
+  const r = await fetch('/api/zip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items})});
+  if(!r.ok) return;
+  const blob = await r.blob(); const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download='download.zip'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+});
+
+loadExts(); browse();
+</script>
+{% endblock %}

@@ -9,6 +9,6 @@ class AllowedExtensionAdmin(admin.ModelAdmin):
 
 @admin.register(Asset)
 class AssetAdmin(admin.ModelAdmin):
-    list_display = ("bucket", "hashed_name", "size", "mime", "created_at")
+    list_display = ("owner", "bucket", "rel_path", "original_name", "size", "mime", "created_at")
     list_filter = ("bucket", "mime", "created_at")
-    search_fields = ("original_name", "hashed_name", "content_sha256")
+    search_fields = ("original_name", "rel_path", "owner__username", "owner__name_spase")

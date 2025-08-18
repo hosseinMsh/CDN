@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     'core.apps.CoreConfig',
+    "accounts.apps.AccountsConfig"
 ]
 
 MIDDLEWARE = [
@@ -118,7 +119,6 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
-LOGIN_URL = '/admin/login/?next=/dashbord/'
 STATIC_URL = '/static/'
 # STATIC_ROOT = BASE_DIR / 'static'
 STATICFILES_DIRS = [
@@ -129,7 +129,6 @@ STATICFILES_DIRS = [
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-
 # Security hardening basics
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_BROWSER_XSS_FILTER = True
@@ -137,12 +136,17 @@ CSRF_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_SECURE = not DEBUG
 X_FRAME_OPTIONS = 'DENY'
 
-# CDN specific settings
+# Custom user model
+AUTH_USER_MODEL = 'accounts.User'
+LOGIN_REDIRECT_URL = '/dashboard/'
+LOGOUT_REDIRECT_URL = '/accounts/login/'
+LOGIN_URL = '/accounts/login/'
+
+# CDN settings
 CDN_ROOT = Path(os.getenv('CDN_ROOT', '/var/cdn/objects'))
 CDN_ROOT.mkdir(parents=True, exist_ok=True)
-MAX_UPLOAD_SIZE = int(os.getenv('MAX_UPLOAD_SIZE', 50 * 1024 * 1024))  # 50 MB default
+MAX_UPLOAD_SIZE = int(os.getenv('MAX_UPLOAD_SIZE', 50 * 1024 * 1024))
 
-# Optional: python-magic for robust MIME detection
 try:
     import magic  # type: ignore
     MAGIC_AVAILABLE = True

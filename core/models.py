@@ -1,9 +1,8 @@
+from django.conf import settings
 from django.db import models
 
 class AllowedExtension(models.Model):
-    """Allowlist of file extensions that are permitted to be uploaded.
-    Extensions are stored without leading dot (e.g., 'png', 'css').
-    """
+    """Allowlist of file extensions (without dot)."""
     ext = models.CharField(max_length=32, unique=True)
     description = models.CharField(max_length=128, blank=True)
     enabled = models.BooleanField(default=True)
@@ -13,24 +12,25 @@ class AllowedExtension(models.Model):
         return f".{self.ext}"
 
 class Asset(models.Model):
-    """Metadata about a stored object. Content is addressed by sha256 and
-    served by Nginx from disk; Django is used for control plane only.
-    """
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="assets")
     bucket = models.CharField(max_length=64, db_index=True)
     original_name = models.CharField(max_length=255)
-    hashed_name = models.CharField(max_length=255, db_index=True)
-    content_sha256 = models.CharField(max_length=64, db_index=True)
+    rel_path = models.CharField(max_length=512)  # inside user folder
     size = models.BigIntegerField()
     mime = models.CharField(max_length=128, default='application/octet-stream')
     is_public = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        indexes = [
-            models.Index(fields=["bucket", "hashed_name"]),
-            models.Index(fields=["bucket", "content_sha256"]),
-        ]
         ordering = ["-created_at"]
+        unique_together = ("owner", "bucket", "rel_path", "original_name")
 
     def __str__(self):
-        return f"{self.bucket}/{self.hashed_name}"
+        ns = getattr(self.owner, 'name_spase', self.owner.username)
+        return f"{ns}/{self.bucket}/{self.rel_path}"
+
+    @property
+    def public_url(self) -> str:
+        ns = getattr(self.owner, 'name_spase', self.owner.username)
+        base = f"/cdn/{ns}/{self.bucket}"
+        return f"{base}/{self.rel_path}/{self.original_name}" if self.rel_path else f"{base}/{self.original_name}"
