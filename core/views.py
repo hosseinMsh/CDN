@@ -128,6 +128,7 @@ def api_upload(request):
 
 @login_required
 @require_POST
+@csrf_exempt
 def api_zip(request):
     """Download a ZIP of selected files owned by the current user.
     Body JSON: {"items": [{"bucket":"assets","rel_path":"path","name":"file.ext"}, ...]}
@@ -166,6 +167,8 @@ def api_zip(request):
 
 @login_required
 @require_GET
+@csrf_exempt
+
 def api_file_private(request):
     """Private file gate using Nginx X-Accel-Redirect. Only owner can access."""
     bucket = (request.GET.get('bucket') or 'assets').strip()
@@ -188,6 +191,8 @@ def api_file_private(request):
 
 @login_required
 @require_GET
+@csrf_exempt
+
 def api_browse(request):
     """
     List folders/files one level under rel_path for current user.
@@ -242,6 +247,8 @@ def api_browse(request):
 
 @login_required
 @require_POST
+@csrf_exempt
+
 def api_mkdir(request):
     """
     POST /api/mkdir
@@ -269,6 +276,8 @@ def api_mkdir(request):
 
 @login_required
 @require_POST
+@csrf_exempt
+
 def api_rename(request):
     """
     POST /api/rename
@@ -323,6 +332,8 @@ def api_rename(request):
 
 @login_required
 @require_POST
+@csrf_exempt
+
 def api_delete(request):
     """
     POST /api/delete
