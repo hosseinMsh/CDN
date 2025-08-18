@@ -1,0 +1,5 @@
+Django>=5.0,<6.0
+python-dotenv>=1.0
+# Optional: better mime detection (requires libmagic in OS)
+python-magic>=0.4.27 ; platform_system != "Windows"
+#psycopg2-binary>=2.9
