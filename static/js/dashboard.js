@@ -1,5 +1,5 @@
 // ===== Feature toggles =====
-const FEATURE_THUMBS = false; // اگر خواستی thumbnail واقعی، این رو true کن (و endpoint رو داری)
+const FEATURE_THUMBS = false;     // اگر thumbnail سروری ساختی، true کن
 
 // ===== Utilities =====
 const $ = (s, r=document) => r.querySelector(s);
@@ -16,43 +16,32 @@ let cacheFiles = [];
 let spaces = [];
 let currentSpaceId = null;
 let ctxTarget = null;
+let navLock = false; // جلوگیری از کلیک‌های پیاپی تا اتمام browse
 
 // ===== Modal / Toast =====
-const modal = $('#modal');
-const modalTitle = $('#modalTitle');
-const modalText  = $('#modalText');
-const modalInput = $('#modalInput');
-const modalOk    = $('#modalOk');
-const modalCancel= $('#modalCancel');
-const toast      = $('#toast');
+const modal = $('#modal'), modalTitle = $('#modalTitle'), modalText = $('#modalText'),
+      modalInput = $('#modalInput'), modalOk = $('#modalOk'), modalCancel = $('#modalCancel'),
+      toast = $('#toast');
 let modalResolve = null;
 
 function showModal({title, text, withInput=false, placeholder='', okText='OK', danger=false}) {
   modalTitle.textContent = title || '';
   modalText.textContent = text || '';
   modalInput.classList.toggle('hidden', !withInput);
-  modalInput.value = '';
-  modalInput.placeholder = placeholder || '';
+  modalInput.value = ''; modalInput.placeholder = placeholder || '';
   modalOk.textContent = okText || 'OK';
   modalOk.classList.toggle('danger', !!danger);
   modal.classList.remove('hidden');
   if (withInput) modalInput.focus();
   return new Promise((resolve)=> { modalResolve = resolve; });
 }
-function closeModal(val=null){
-  modal.classList.add('hidden');
-  if (modalResolve) { modalResolve(val); modalResolve = null; }
-}
+function closeModal(val=null){ modal.classList.add('hidden'); if (modalResolve){ modalResolve(val); modalResolve=null; } }
 modalOk.addEventListener('click', ()=> closeModal(modalInput.classList.contains('hidden') ? true : modalInput.value.trim()));
 modalCancel.addEventListener('click', ()=> closeModal(null));
 modal.addEventListener('click', (e)=> { if(e.target===modal) closeModal(null); });
 document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeModal(null); });
 
-function showToast(message, ms=2200){
-  toast.textContent = message;
-  toast.classList.remove('hidden');
-  setTimeout(()=> toast.classList.add('hidden'), ms);
-}
+function showToast(message, ms=2200){ toast.textContent = message; toast.classList.remove('hidden'); setTimeout(()=> toast.classList.add('hidden'), ms); }
 
 // ===== Tabs =====
 const tabExplorer=$('#tab-explorer'), tabUpload=$('#tab-upload'), panelExplorer=$('#panel-explorer'), panelUpload=$('#panel-upload');
@@ -64,8 +53,8 @@ function switchTab(name){
   panelUpload.classList.toggle('hidden', ex);
   $('#currentPathHint').textContent = '/'+currentPath;
 }
-tabExplorer.addEventListener('click', ()=>switchTab('explorer'));
-tabUpload.addEventListener('click', ()=>switchTab('upload'));
+tabExplorer?.addEventListener('click', ()=>switchTab('explorer'));
+tabUpload?.addEventListener('click', ()=>switchTab('upload'));
 
 // ===== Spaces + usage =====
 async function loadSpaces(){
@@ -85,23 +74,25 @@ function updateUsage(s){
   $('#usageText').textContent = `${fmtSize(s.used_bytes)} / ${fmtSize(s.max_bytes)} · ${s.file_count}/${s.max_files} files`;
   $('#usageBar').style.width = pct(s.used_bytes, s.max_bytes) + '%';
 }
-$('#spaceSel').addEventListener('change', async (e)=>{
+$('#spaceSel')?.addEventListener('change', async (e)=>{
   const id = e.target.value;
   const r = await fetch('/api/space/set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({space_id:id})});
   const j = await r.json().catch(()=>({ok:false}));
   if(!j.ok){ showToast('Failed to switch space'); return; }
   currentSpaceId = +id;
   const s = spaces.find(x=>x.id==id); if(s) updateUsage(s);
-  currentPath=''; await browse();
+  currentPath=''; await reloadAll();
 });
 
-// ===== Explorer =====
+// ===== Explorer + Tree =====
 const grid = $('#grid'), emptyState = $('#empty'), crumbs = $('#crumbs'), skeleton = $('#skeleton');
+const treeRoot = $('#treeRoot');
+
 function renderCrumbs(){
   crumbs.innerHTML = '';
   const rootBtn = document.createElement('button');
   rootBtn.className='px-2 py-1 rounded hover:bg-slate-100'; rootBtn.textContent='/';
-  rootBtn.addEventListener('click', ()=>{ currentPath=''; browse(); });
+  rootBtn.addEventListener('click', ()=>{ currentPath=''; reloadAll(); });
   crumbs.appendChild(rootBtn);
   if(!currentPath) return;
   const parts=currentPath.split('/'); let acc='';
@@ -109,55 +100,95 @@ function renderCrumbs(){
     const sep=document.createElement('span'); sep.textContent='›'; sep.className='px-1 text-slate-400'; crumbs.appendChild(sep);
     acc=joinPath(acc,part);
     const btn=document.createElement('button'); btn.className='px-2 py-1 rounded hover:bg-slate-100'; btn.textContent=part;
-    btn.addEventListener('click', ()=>{ currentPath=parts.slice(0, idx+1).join('/'); browse(); });
+    btn.addEventListener('click', ()=>{ currentPath=parts.slice(0, idx+1).join('/'); reloadAll(); });
     crumbs.appendChild(btn);
   });
 }
 
+// Lazy folder tree node
+function makeTreeNode(relPath, name, isRoot=false){
+  const node = document.createElement('div');
+  node.className = 'node';
+  const fullPath = relPath ? joinPath(relPath, name) : name; // child path
+  node.dataset.path = isRoot ? '' : fullPath;
+
+  node.innerHTML = `
+    <span class="caret">▸</span>
+    <span class="label">${isRoot ? '(root)' : name}</span>
+  `;
+
+  const caret = node.querySelector('.caret');
+  const label = node.querySelector('.label');
+
+  let expanded = false;
+  let childrenWrap = null;
+
+  async function toggle(){
+    if (navLock) return;
+    // single-click navigates to this node in Explorer
+    currentPath = node.dataset.path || '';
+    await browse();
+
+    // expand/collapse children list
+    if (!expanded) {
+      // build children container
+      childrenWrap = document.createElement('div');
+      childrenWrap.className = 'children';
+      node.after(childrenWrap);
+      const j = await fetch(`/api/browse?rel_path=${encodeURIComponent(node.dataset.path || '')}`)
+                    .then(r=>r.json()).catch(()=>({ok:false}));
+      if(j.ok){
+        (j.folders||[]).forEach(fname=>{
+          const child = makeTreeNode(node.dataset.path || '', fname, false);
+          childrenWrap.appendChild(child);
+        });
+      }
+      caret.textContent = '▾';
+      expanded = true;
+    } else {
+      caret.textContent = '▸';
+      if (childrenWrap) { childrenWrap.remove(); childrenWrap = null; }
+      expanded = false;
+    }
+  }
+
+  node.addEventListener('click', toggle);
+  node.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' ') { e.preventDefault(); toggle(); }});
+  node.setAttribute('tabindex','0');
+
+  return node;
+}
+
+function buildTreeRoot(){
+  treeRoot.innerHTML = '';
+  treeRoot.appendChild(makeTreeNode('', '', true)); // root node
+}
+
+// Folder tile (single-click)
 function tileFolder(name){
   const el = document.createElement('div');
   el.className = 'ui-tile cursor-pointer';
   el.setAttribute('tabindex','0');
-  el.dataset.folder = name;
-
   el.innerHTML = `
     <div class="thumb flex items-center justify-center text-2xl">📁</div>
     <div class="meta">
       <div class="mt-2 font-medium truncate" title="${name}">${name}</div>
       <div class="text-xs text-slate-500">Folder</div>
-    </div>
-  `;
-
-  el.addEventListener('click', (e)=>{
-    if (e.target.closest('.dots')) return;
-    if (navLock) return;
-    currentPath = joinPath(currentPath, name);
-    browse();
-  });
-
-  el.addEventListener('keydown', (e)=>{
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      if (navLock) return;
-      currentPath = joinPath(currentPath, name);
-      browse();
-    }
-  });
-
+    </div>`;
+  el.addEventListener('click', ()=>{ if (navLock) return; currentPath = joinPath(currentPath, name); reloadAll(); });
+  el.addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); if(navLock) return; currentPath = joinPath(currentPath, name); reloadAll(); }});
   return el;
 }
 
-
 function tileFile(a){
   const el=document.createElement('div'); el.className='ui-tile group';
-  let thumbHTML = `<div class="thumb flex items-center justify-center text-3xl">📘</div>`;
-  if (FEATURE_THUMBS && a.mime && a.mime.startsWith('image/')) {
-    const tUrl = `/api/thumb?rel_path=${encodeURIComponent(currentPath)}&name=${encodeURIComponent(a.name)}&w=320&h=220`;
-    thumbHTML = `<img class="thumb" src="${tUrl}" alt="${a.name}" loading="lazy">`;
-  }
+  const isImg = FEATURE_THUMBS && a.mime && a.mime.startsWith('image/');
+  const thumb = isImg
+    ? `<img class="thumb" src="/api/thumb?rel_path=${encodeURIComponent(currentPath)}&name=${encodeURIComponent(a.name)}&w=320&h=220" alt="${a.name}" loading="lazy">`
+    : `<div class="thumb flex items-center justify-center text-3xl">📘</div>`;
   el.innerHTML=`
     <button class="dots" aria-label="More" type="button">⋮</button>
-    ${thumbHTML}
+    ${thumb}
     <div class="meta">
       <div class="mt-2 font-medium truncate" title="${a.name}">${a.name}</div>
       <div class="text-xs text-slate-500">${a.size?fmtSize(a.size):''} · ${a.mime||''}</div>
@@ -168,11 +199,9 @@ function tileFile(a){
         </label>
       </div>
     </div>`;
-  // select on tile click (not on link/button/checkbox)
   el.addEventListener('click', (e)=>{
     if(e.target.closest('.dots') || e.target.tagName==='A' || e.target.type==='checkbox') return;
-    const cb = el.querySelector('input[type="checkbox"]');
-    cb.checked = !cb.checked;
+    const cb = el.querySelector('input[type="checkbox"]'); cb.checked = !cb.checked;
     cb.dispatchEvent(new Event('change'));
   });
   el.querySelector('input[type="checkbox"]').addEventListener('change', e=>{
@@ -212,10 +241,7 @@ ctx.addEventListener('click', async (e)=>{
 async function browse(){
   if (navLock) return;
   navLock = true;
-
-  $('#skeleton').classList.remove('hidden');
-  grid.innerHTML=''; emptyState.classList.add('hidden');
-
+  $('#skeleton').classList.remove('hidden'); grid.innerHTML=''; emptyState.classList.add('hidden');
   try{
     const r = await fetch(`/api/browse?rel_path=${encodeURIComponent(currentPath)}`);
     const j = await r.json();
@@ -229,25 +255,33 @@ async function browse(){
   }
 }
 
+async function reloadAll(){
+  await browse();
+  // sync tree UI: expand ancestors (simple approach: rebuild root; user می‌تواند دوباره باز کند)
+  // برای سادگی فعلاً فقط رفرش روت:
+  buildTreeRoot();
+}
+
+// Batch / Toolbar
 function updateBatchUI(){
   $('#selCount').textContent = `${selected.size} selected`;
   $('#actDelete').disabled = selected.size===0;
   $('#actZip').disabled    = selected.size===0;
 }
-$('#selAll').addEventListener('change', e=>{
+$('#selAll')?.addEventListener('change', e=>{
   selected.clear();
   if(e.target.checked){ cacheFiles.forEach(a=>selected.add(a.name)); }
   renderGrid(); updateBatchUI();
 });
 
 // Actions
-$('#btnNewFolder').addEventListener('click', async ()=>{
+$('#btnNewFolder')?.addEventListener('click', async ()=>{
   const name = await showModal({title:'New folder', text:'Enter folder name', withInput:true, placeholder:'MyFolder', okText:'Create'});
   if(!name) return;
   const r = await fetch('/api/mkdir',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({rel_path: currentPath, name})});
   const j = await r.json().catch(()=>({ok:false}));
   if(!j.ok){ showToast('Create folder failed'); return; }
-  showToast('Folder created'); browse();
+  showToast('Folder created'); await reloadAll();
 });
 
 async function renameFile(oldName){
@@ -258,7 +292,7 @@ async function renameFile(oldName){
   const r = await fetch('/api/rename',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
   const j = await r.json().catch(()=>({ok:false}));
   if(!j.ok){ showToast('Rename failed'); return; }
-  showToast('Renamed'); browse();
+  showToast('Renamed'); await reloadAll();
 }
 
 async function deleteFile(name){
@@ -268,10 +302,10 @@ async function deleteFile(name){
   const j = await r.json().catch(()=>({ok:false}));
   if(!j.ok){ showToast('Delete failed'); return; }
   showToast('Deleted');
-  await loadSpaces(); browse();
+  await loadSpaces(); await reloadAll();
 }
 
-$('#actZip').addEventListener('click', async ()=>{
+$('#actZip')?.addEventListener('click', async ()=>{
   if(!selected.size) return;
   const items = Array.from(selected).map(n=>({rel_path: currentPath, name:n}));
   const r = await fetch('/api/zip',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({items})});
@@ -280,7 +314,7 @@ $('#actZip').addEventListener('click', async ()=>{
   const a = document.createElement('a'); a.href=url; a.download='download.zip'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
-$('#actDelete').addEventListener('click', async ()=>{
+$('#actDelete')?.addEventListener('click', async ()=>{
   if(!selected.size) return;
   const ok = await showModal({title:'Delete selected', text:`Delete ${selected.size} files?`, okText:'Delete', danger:true});
   if(!ok) return;
@@ -288,14 +322,14 @@ $('#actDelete').addEventListener('click', async ()=>{
   const r = await fetch('/api/delete-batch',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({items})});
   const j = await r.json().catch(()=>({ok:false}));
   if(!j.ok) showToast('Batch delete failed'); else showToast(`Deleted ${j.deleted}, failed ${j.failed}`);
-  await loadSpaces(); await browse();
+  await loadSpaces(); await reloadAll();
 });
 
 // Search
-$('#q').addEventListener('input', debounce(listSearch,300));
+$('#q')?.addEventListener('input', debounce(listSearch,300));
 async function listSearch(){
   const q = $('#q').value.trim();
-  if(!q){ return browse(); }
+  if(!q){ return reloadAll(); }
   $('#skeleton').classList.remove('hidden'); grid.innerHTML='';
   const r = await fetch('/api/assets?q=' + encodeURIComponent(q)); const j = await r.json().catch(()=>({ok:false}));
   $('#skeleton').classList.add('hidden');
@@ -304,7 +338,7 @@ async function listSearch(){
   selected.clear(); updateBatchUI(); renderCrumbs(); renderGrid();
 }
 
-// ===== Uploads with progress =====
+// Uploads
 const drop=$('#drop'), filesInput=$('#files'), folderInput=$('#folder');
 const queueList=$('#queue'), queueEmpty=$('#queueEmpty'), startBtn=$('#startUpload');
 let uploadQueue=[]; let running=false;
@@ -330,11 +364,11 @@ function setRow(name, {text, pct, cls}){
   if(text!=null){ const st=row.querySelector('[data-status]'); st.textContent=text; st.className='text-xs '+(cls||''); }
   if(pct!=null){ row.querySelector('[data-bar]').style.width = Math.max(0,Math.min(100,pct))+'%'; }
 }
-drop.addEventListener('dragover', e=>{ e.preventDefault(); drop.classList.add('drag'); });
-drop.addEventListener('dragleave', ()=> drop.classList.remove('drag'));
-drop.addEventListener('drop', e=>{ e.preventDefault(); drop.classList.remove('drag'); for(const f of e.dataTransfer.files){ addToQueue(f, currentPath); }});
-filesInput.addEventListener('change', e=>{ for(const f of e.target.files){ addToQueue(f, currentPath); }});
-folderInput.addEventListener('change', e=>{
+drop?.addEventListener('dragover', e=>{ e.preventDefault(); drop.classList.add('drag'); });
+drop?.addEventListener('dragleave', ()=> drop.classList.remove('drag'));
+drop?.addEventListener('drop', e=>{ e.preventDefault(); drop.classList.remove('drag'); for(const f of e.dataTransfer.files){ addToQueue(f, currentPath); }});
+filesInput?.addEventListener('change', e=>{ for(const f of e.target.files){ addToQueue(f, currentPath); }});
+folderInput?.addEventListener('change', e=>{
   for(const f of e.target.files){
     const rp=(f.webkitRelativePath||'').split('/').slice(0,-1).join('/');
     const rel=joinPath(currentPath, rp); addToQueue(f, rel);
@@ -348,7 +382,7 @@ function xhrUpload(url, formData, onProgress){
     x.onerror = () => reject('network'); x.send(formData);
   });
 }
-$('#startUpload').addEventListener('click', async ()=>{
+$('#startUpload')?.addEventListener('click', async ()=>{
   if(running || !uploadQueue.length) return;
   running=true; startBtn.disabled=true;
   while(uploadQueue.length){
@@ -366,18 +400,18 @@ $('#startUpload').addEventListener('click', async ()=>{
     }catch(e){ setRow(file.name, {text:'error', cls:'text-red-700'}); }
   }
   running=false; startBtn.disabled=false;
-  await loadSpaces(); await browse();
+  await loadSpaces(); await reloadAll();
 });
 
-// ===== Init =====
+// Init
 async function init(){
   await loadSpaces();
   switchTab('explorer');
-  await browse();
+  buildTreeRoot();
+  await reloadAll();
   $('#currentPathHint').textContent = '/'+currentPath;
-  // Allowed extensions (display-only)
   fetch('/api/allowed-extensions').then(r=>r.json()).then(j=>{
     $('#extInfo').textContent = j.ok ? `Allowed: ${j.items.join(', ')}` : 'Allowed: (error)';
   }).catch(()=> $('#extInfo').textContent = 'Allowed: (error)');
 }
-init();
+document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init();

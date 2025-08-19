@@ -1,12 +1,13 @@
 {% extends 'base.html' %}
-{% load static %}
-{% block title %}Dashboard – EdgeCDN{% endblock %}
+{% block title %}Dashboard – CDN{% endblock %}
 {% block body %}
-<div class="max-w-7xl mx-auto p-6">
-  <header class="flex flex-wrap items-center gap-4 justify-between mb-6">
+<div class="h-screen flex flex-col">
+  <!-- Header -->
+  <header class="glass sticky top-0 z-40 flex items-center justify-between px-6 py-3 gap-4">
     <div class="flex items-center gap-3">
-      <h1 class="text-2xl md:text-3xl font-bold">EdgeCDN</h1>
-      <span class="text-sm text-slate-500">Hi, {{ request.user.username }} · {{ request.user.name_spase }}</span>
+      <div class="logo-dot"></div>
+      <h1 class="text-xl md:text-2xl font-bold">CDN</h1>
+      <span class="text-xs md:text-sm text-slate-500">Hi, {{ request.user.username }} · {{ request.user.name_spase }}</span>
     </div>
     <div class="flex items-center gap-3">
       <div class="flex items-center gap-2">
@@ -18,95 +19,103 @@
   </header>
 
   <!-- Usage -->
-  <div class="ui-card mb-6">
-    <div class="flex items-center justify-between mb-2">
-      <div class="text-sm text-slate-600">Usage</div>
-      <div id="usageText" class="text-sm font-medium">–</div>
+  <section class="px-6 pt-4">
+    <div class="ui-card mb-4">
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-sm text-slate-600">Usage</div>
+        <div id="usageText" class="text-sm font-medium">–</div>
+      </div>
+      <div class="ui-progress"><div id="usageBar" class="ui-progress-bar"></div></div>
     </div>
-    <div class="ui-progress"><div id="usageBar" class="ui-progress-bar"></div></div>
-  </div>
+  </section>
 
   <!-- Tabs -->
-  <div class="mb-4 border-b border-slate-200">
+  <div class="px-6 mb-2 border-b border-slate-200">
     <nav class="-mb-px flex gap-6" aria-label="Tabs">
       <button id="tab-explorer" class="ui-tab active" type="button">Explorer</button>
       <button id="tab-upload" class="ui-tab" type="button">Upload</button>
     </nav>
   </div>
 
-  <!-- Explorer -->
-  <section id="panel-explorer" class="space-y-4">
-    <div class="flex flex-wrap items-center gap-3">
-      <nav id="crumbs" class="flex items-center gap-1 text-sm"></nav>
-      <div class="ml-auto flex items-center gap-2">
-        <button id="btnNewFolder" class="ui-btn light" type="button">New folder</button>
-        <input id="q" class="ui-input" placeholder="Search files..." />
+  <!-- Main -->
+  <div class="flex-1 min-h-0 grid grid-cols-12 gap-4 px-6 pb-6">
+    <!-- Sidebar: Tree -->
+    <aside class="col-span-12 md:col-span-3 xl:col-span-2 ui-card overflow-auto" id="treePanel">
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-sm font-semibold">Folders</div>
+        <button id="btnNewFolder" class="ui-btn light text-xs" type="button">New folder</button>
       </div>
-    </div>
+      <div id="treeRoot" class="tree"></div>
+    </aside>
 
-    <!-- Batch -->
-    <div class="flex items-center gap-3">
-      <label class="flex items-center gap-2 text-sm">
-        <input id="selAll" type="checkbox" class="ui-checkbox"> Select all
-      </label>
-      <button id="actDelete" class="ui-btn danger" type="button" disabled>Delete selected</button>
-      <button id="actZip" class="ui-btn" type="button" disabled>ZIP selected</button>
-      <div class="text-xs text-slate-500" id="selCount">0 selected</div>
-    </div>
-
-    <!-- Skeleton -->
-    <div id="skeleton" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 hidden" aria-hidden="true">
-      {% for i in "xxxxxxxxxxxx" %}<div class="ui-tile skeleton"></div>{% endfor %}
-    </div>
-
-    <!-- Grid -->
-    <div id="grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3"></div>
-    <div id="empty" class="hidden text-center text-slate-500 py-12">No items here.</div>
-
-    <!-- Context Menu -->
-    <div id="ctx" class="ui-menu hidden">
-      <button data-act="open" class="ui-menu-item" type="button">Open</button>
-      <button data-act="rename" class="ui-menu-item" type="button">Rename / Move</button>
-      <button data-act="copy" class="ui-menu-item" type="button">Copy link</button>
-      <button data-act="delete" class="ui-menu-item danger" type="button">Delete</button>
-    </div>
-  </section>
-
-  <!-- Upload -->
-  <section id="panel-upload" class="hidden">
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div class="lg:col-span-1 ui-card">
-        <h2 class="font-semibold text-lg mb-4">Upload files</h2>
-        <div class="mb-4 text-xs text-slate-500">
-          Target path is the <strong>current Explorer path</strong>:
-          <div>Current: <span id="currentPathHint" class="font-mono">/</span></div>
+    <!-- Explorer -->
+    <section id="panel-explorer" class="col-span-12 md:col-span-9 xl:col-span-10 space-y-4">
+      <!-- Toolbar -->
+      <div class="flex flex-wrap items-center gap-3">
+        <nav id="crumbs" class="flex items-center gap-1 text-sm"></nav>
+        <div class="ml-auto flex items-center gap-2">
+          <input id="q" class="ui-input" placeholder="Search files..." />
+          <label class="flex items-center gap-2 text-sm">
+            <input id="selAll" type="checkbox" class="ui-checkbox"> Select all
+          </label>
+          <button id="actZip" class="ui-btn" type="button" disabled>ZIP</button>
+          <button id="actDelete" class="ui-btn danger" type="button" disabled>Delete</button>
+          <div id="selCount" class="text-xs text-slate-500">0 selected</div>
         </div>
-        <div id="drop" class="ui-dropzone" tabindex="0">
-          <p class="text-sm text-slate-600 mb-3">Drag & drop files here</p>
-          <div class="flex flex-col gap-2 items-center">
-            <label class="ui-btn" aria-label="Choose files">
-              Choose files
-              <input id="files" type="file" multiple class="hidden" />
-            </label>
-            <label class="ui-btn secondary" aria-label="Choose folder">
-              Choose a folder (experimental)
-              <input id="folder" type="file" webkitdirectory directory class="hidden" />
-            </label>
+      </div>
+
+      <!-- Skeleton -->
+      <div id="skeleton" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3" aria-hidden="true">
+        {% for i in "xxxxxxxxxxxx" %}<div class="ui-tile skeleton"></div>{% endfor %}
+      </div>
+
+      <!-- Grid -->
+      <div id="grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3"></div>
+      <div id="empty" class="hidden text-center text-slate-500 py-12">No items here.</div>
+
+      <!-- Context Menu -->
+      <div id="ctx" class="ui-menu hidden">
+        <button data-act="open" class="ui-menu-item" type="button">Open</button>
+        <button data-act="rename" class="ui-menu-item" type="button">Rename / Move</button>
+        <button data-act="copy" class="ui-menu-item" type="button">Copy link</button>
+        <button data-act="delete" class="ui-menu-item danger" type="button">Delete</button>
+      </div>
+    </section>
+
+    <!-- Upload -->
+    <section id="panel-upload" class="hidden col-span-12 md:col-span-9 xl:col-span-10">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div class="lg:col-span-1 ui-card">
+          <h2 class="font-semibold text-lg mb-4">Upload files</h2>
+          <p class="text-xs text-slate-500 mb-3">Target path is the <strong>current Explorer path</strong>:</p>
+          <div class="text-xs text-slate-700 mb-4">Current: <span id="currentPathHint" class="font-mono">/</span></div>
+          <div id="drop" class="ui-dropzone" tabindex="0">
+            <p class="text-sm text-slate-600 mb-3">Drag & drop files here</p>
+            <div class="flex flex-col gap-2 items-center">
+              <label class="ui-btn" aria-label="Choose files">
+                Choose files
+                <input id="files" type="file" multiple class="hidden" />
+              </label>
+              <label class="ui-btn secondary" aria-label="Choose folder">
+                Choose a folder (experimental)
+                <input id="folder" type="file" webkitdirectory directory class="hidden" />
+              </label>
+            </div>
+            <p id="extInfo" class="mt-3 text-xs text-slate-500">Allowed: loading…</p>
           </div>
-          <p id="extInfo" class="mt-3 text-xs text-slate-500">Allowed: loading…</p>
+          <div class="mt-4">
+            <button id="startUpload" class="ui-btn w-full" type="button">Start upload</button>
+          </div>
         </div>
-        <div class="mt-4">
-          <button id="startUpload" class="ui-btn w-full" type="button">Start upload</button>
-        </div>
-      </div>
 
-      <div class="lg:col-span-2 ui-card">
-        <h3 class="font-semibold mb-4">Upload status</h3>
-        <div id="queue" class="space-y-2 text-sm"></div>
-        <div id="queueEmpty" class="text-slate-500 text-sm">No files in queue.</div>
+        <div class="lg:col-span-2 ui-card">
+          <h3 class="font-semibold mb-4">Upload status</h3>
+          <div id="queue" class="space-y-2 text-sm"></div>
+          <div id="queueEmpty" class="text-slate-500 text-sm">No files in queue.</div>
+        </div>
       </div>
-    </div>
-  </section>
+    </section>
+  </div>
 </div>
 
 {% endblock %}
