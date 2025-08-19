@@ -26,7 +26,7 @@ def sanitize_rel_path(rel_path: str) -> str:
     return '/'.join(parts)
 
 def safe_folder_name(name: str) -> str:
-    """Filesystem path: CDN_ROOT/<name_spase>/<bucket>/<rel_path>/filename"""
+    """Filesystem path: CDN_ROOT/<name_spase>/<rel_path>/filename"""
     name = (name or '').strip().strip('/')
     if not name or '..' in name or '/' in name: raise ValueError('invalid folder name')
     if SAFE_NAME_RE.search(name): raise ValueError('invalid folder name')
@@ -40,15 +40,15 @@ def ns_base(space: Space) -> Path:
     p.mkdir(parents=True, exist_ok=True)
     return p
 
-def fs_base(space: Space, bucket: str, rel_path: str = '') -> Path:
-    base = ns_base(space) / bucket
+def fs_base(space: Space, rel_path: str = '') -> Path:
+    base = ns_base(space)
     if rel_path:
         base = base / rel_path
     base.mkdir(parents=True, exist_ok=True)
     return base
 
-def build_storage_path(space: Space, bucket: str, rel_path: str, filename: str) -> Path:
-    p = fs_base(space, bucket, rel_path) / filename
+def build_storage_path(space: Space, rel_path: str, filename: str) -> Path:
+    p = fs_base(space, rel_path) / filename
     p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
