@@ -5,7 +5,7 @@ from django.db.models import Q, F
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse, HttpResponseBadRequest, StreamingHttpResponse, HttpResponse
-from django.shortcuts import render, redirect
+from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
@@ -39,8 +39,7 @@ def get_current_space(request) -> Space | None:
 @login_required
 def dashboard(request):
     """Dashboard with upload form + folder browser."""
-    space = get_current_space(request)
-    return render(request, 'core/dashboard.html', {'space': space})
+    return render(request, 'core/dashboard.html', {'space': get_current_space(request)})
 
 # ---------- spaces: list + switch ----------
 
@@ -77,10 +76,9 @@ def api_space_set(request):
 def api_browse(request):
     space = get_current_space(request)
     if not space: return JsonResponse({'ok': False, 'error': 'no space'}, status=400)
-    bucket = (request.GET.get('bucket') or 'assets').strip()
     rel = sanitize_rel_path(request.GET.get('rel_path') or '')
 
-    qs = Asset.objects.filter(space=space, bucket=bucket)
+    qs = Asset.objects.filter(space=space)
 
     # Folders (DB + FS to include empty ones)
     prefix = f"{rel}/" if rel else ''
@@ -94,7 +92,7 @@ def api_browse(request):
 
     folders_fs = set()
     try:
-        for entry in fs_base(space, bucket, rel).iterdir():
+        for entry in fs_base(space, rel).iterdir():
             if entry.is_dir(): folders_fs.add(entry.name)
     except FileNotFoundError:
         pass
@@ -115,17 +113,10 @@ def api_assets(request):
     space = get_current_space(request)
     if not space: return JsonResponse({'ok': False, 'error': 'no space'}, status=400)
     q = request.GET.get('q')
-    bucket = (request.GET.get('bucket') or 'assets').strip()
-    qs = Asset.objects.filter(space=space, bucket=bucket)
+    qs = Asset.objects.filter(space=space)
     if q:
-        qs = qs.filter(
-            Q(original_name__icontains=q) |
-            Q(rel_path__icontains=q) |
-            Q(mime__icontains=q)
-        )
-    items = [{
-        'original_name': a.original_name, 'size': a.size, 'mime': a.mime, 'url': a.public_url
-    } for a in qs[:300]]
+        qs = qs.filter(Q(original_name__icontains=q) | Q(rel_path__icontains=q) | Q(mime__icontains=q))
+    items = [{'original_name': a.original_name, 'size': a.size, 'mime': a.mime, 'url': a.public_url} for a in qs[:300]]
     return JsonResponse({'ok': True, 'items': items})
 
 # ---------- allowed extensions ----------
@@ -146,10 +137,9 @@ def api_mkdir(request):
     space = get_current_space(request)
     if not space: return JsonResponse({'ok': False, 'error': 'no space'}, status=400)
     data = json.loads(request.body.decode('utf-8'))
-    bucket = (data.get('bucket') or 'assets').strip()
     rel = sanitize_rel_path(data.get('rel_path') or '')
     name = safe_folder_name(data.get('name') or '')
-    target = fs_base(space, bucket, rel) / name
+    target = fs_base(space, rel) / name
     if target.exists(): return JsonResponse({'ok': False, 'error': 'folder exists'}, status=409)
     target.mkdir(parents=True, exist_ok=False)
     return JsonResponse({'ok': True})
@@ -161,20 +151,19 @@ def api_rename(request):
     space = get_current_space(request)
     if not space: return JsonResponse({'ok': False, 'error': 'no space'}, status=400)
     data = json.loads(request.body.decode('utf-8'))
-    bucket = (data.get('bucket') or 'assets').strip()
     old_rel = sanitize_rel_path(data.get('old_rel_path') or '')
     new_rel = sanitize_rel_path(data.get('new_rel_path') or old_rel)
     old_name = safe_filename(data.get('old_name') or '')
     new_name = safe_filename(data.get('new_name') or old_name)
 
     try:
-        a = Asset.objects.get(space=space, bucket=bucket, rel_path=old_rel, original_name=old_name)
+        a = Asset.objects.get(space=space, rel_path=old_rel, original_name=old_name)
     except Asset.DoesNotExist:
         return JsonResponse({'ok': False, 'error': 'not found'}, status=404)
 
-    old_p = build_storage_path(space, bucket, old_rel, old_name)
+    old_p = build_storage_path(space, old_rel, old_name)
     if not old_p.exists(): return JsonResponse({'ok': False, 'error': 'missing on disk'}, status=404)
-    new_p = build_storage_path(space, bucket, new_rel, new_name)
+    new_p = build_storage_path(space, new_rel, new_name)
     if new_p.exists(): return JsonResponse({'ok': False, 'error': 'target exists'}, status=409)
     new_p.parent.mkdir(parents=True, exist_ok=True)
     os.replace(old_p, new_p)
@@ -189,14 +178,14 @@ def api_delete(request):
     space = get_current_space(request)
     if not space: return JsonResponse({'ok': False, 'error': 'no space'}, status=400)
     data = json.loads(request.body.decode('utf-8'))
-    bucket = (data.get('bucket') or 'assets').strip()
     rel = sanitize_rel_path(data.get('rel_path') or '')
     name = safe_filename(data.get('name') or '')
     try:
-        a = Asset.objects.get(space=space, bucket=bucket, rel_path=rel, original_name=name)
+        a = Asset.objects.get(space=space, rel_path=rel, original_name=name)
     except Asset.DoesNotExist:
         return JsonResponse({'ok': False, 'error': 'not found'}, status=404)
-    p = build_storage_path(space, bucket, rel, name)
+
+    p = build_storage_path(space, rel, name)
     try:
         if p.exists(): p.unlink()
     except Exception:
@@ -218,7 +207,6 @@ def api_delete_batch(request):
     space = get_current_space(request)
     if not space: return JsonResponse({'ok': False, 'error': 'no space'}, status=400)
     data = json.loads(request.body.decode('utf-8'))
-    bucket = (data.get('bucket') or 'assets').strip()
     items = data.get('items') or []  # [{rel_path, name}]
     ok = 0; err = 0
     total_released = 0
@@ -226,10 +214,10 @@ def api_delete_batch(request):
         rel = sanitize_rel_path(it.get('rel_path') or '')
         name = safe_filename(it.get('name') or '')
         try:
-            a = Asset.objects.get(space=space, bucket=bucket, rel_path=rel, original_name=name)
+            a = Asset.objects.get(space=space, rel_path=rel, original_name=name)
         except Asset.DoesNotExist:
             err += 1; continue
-        p = build_storage_path(space, bucket, rel, name)
+        p = build_storage_path(space, rel, name)
         try:
             if p.exists(): p.unlink()
             total_released += a.size
@@ -257,7 +245,6 @@ def api_upload(request):
     """
     space = get_current_space(request)
     if not space: return JsonResponse({'ok': False, 'error': 'no space'}, status=400)
-    bucket = (request.GET.get('bucket') or 'assets').strip()
     rel = sanitize_rel_path(request.GET.get('rel_path') or '')
     if 'file' not in request.FILES: return HttpResponseBadRequest('file required')
     f = request.FILES['file']
@@ -277,7 +264,7 @@ def api_upload(request):
     head = f.read(min(8192, f.size)); f.seek(0)
     mime = guess_mime(safe_name, head)
 
-    path = build_storage_path(space, bucket, rel, safe_name)
+    path = build_storage_path(space, rel, safe_name)
     path = ensure_unique(path)
 
     tmp = path.with_suffix(path.suffix + ".part")
@@ -290,7 +277,7 @@ def api_upload(request):
     # create asset + update accounting atomically
     with transaction.atomic():
         a = Asset.objects.create(
-            space=space, bucket=bucket, rel_path=rel, original_name=path.name,
+            space=space, rel_path=rel, original_name=path.name,
             size=size, mime=mime, is_public=True
         )
         Space.objects.filter(id=space.id).update(
@@ -309,23 +296,22 @@ def api_zip(request):
     space = get_current_space(request)
     if not space: return JsonResponse({'ok': False, 'error': 'no space'}, status=400)
     data = json.loads(request.body.decode('utf-8'))
-    items = data.get('items') or []  # [{bucket, rel_path, name}]
+    items = data.get('items') or []  # [{rel_path, name}]
     if not items: return JsonResponse({'ok': False, 'error': 'no items'}, status=400)
 
     def stream():
         bio = io.BytesIO()
         with zipfile.ZipFile(bio, 'w', compression=zipfile.ZIP_DEFLATED) as z:
             for it in items:
-                bucket = (it.get('bucket') or 'assets').strip()
                 rel = sanitize_rel_path(it.get('rel_path') or '')
                 name = safe_filename(it.get('name') or '')
                 try:
-                    a = Asset.objects.get(space=space, bucket=bucket, rel_path=rel, original_name=name)
+                    a = Asset.objects.get(space=space, rel_path=rel, original_name=name)
                 except Asset.DoesNotExist:
                     continue
-                p = build_storage_path(space, bucket, rel, name)
+                p = build_storage_path(space, rel, name)
                 if p.exists():
-                    arcname = f"{bucket}/{rel+'/'+name if rel else name}"
+                    arcname = f"{rel+'/'+name if rel else name}"
                     z.write(p, arcname=arcname)
         bio.seek(0)
         yield from bio
