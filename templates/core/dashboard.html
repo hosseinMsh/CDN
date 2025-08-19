@@ -1,7 +1,6 @@
 {% extends 'base.html' %}
 {% load static %}
 {% block title %}Dashboard – EdgeCDN{% endblock %}
-
 {% block body %}
 <div class="max-w-7xl mx-auto p-6">
   <header class="flex flex-wrap items-center gap-4 justify-between mb-6">
@@ -12,88 +11,84 @@
     <div class="flex items-center gap-3">
       <div class="flex items-center gap-2">
         <label class="text-sm text-slate-600">Space</label>
-        <select id="spaceSel" class="border rounded-lg px-3 py-2"></select>
+        <select id="spaceSel" class="ui-select"></select>
       </div>
-      <a href="/accounts/logout/" class="text-sm px-3 py-2 rounded-lg bg-slate-900 text-white">Logout</a>
+      <a href="/accounts/logout/" class="ui-btn">Logout</a>
     </div>
   </header>
 
   <!-- Usage -->
-  <div id="usage" class="bg-white rounded-xl p-4 shadow mb-6">
+  <div class="ui-card mb-6">
     <div class="flex items-center justify-between mb-2">
       <div class="text-sm text-slate-600">Usage</div>
       <div id="usageText" class="text-sm font-medium">–</div>
     </div>
-    <div class="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-      <div id="usageBar" class="h-2 w-0" style="background:#0f172a"></div>
-    </div>
+    <div class="ui-progress"><div id="usageBar" class="ui-progress-bar"></div></div>
   </div>
 
   <!-- Tabs -->
   <div class="mb-4 border-b border-slate-200">
     <nav class="-mb-px flex gap-6" aria-label="Tabs">
-      <button id="tab-explorer" class="tab active border-b-2 border-slate-900 px-1 pb-3 text-sm font-medium">Explorer</button>
-      <button id="tab-upload" class="tab px-1 pb-3 text-sm text-slate-600 hover:text-slate-900">Upload</button>
+      <button id="tab-explorer" class="ui-tab active" type="button">Explorer</button>
+      <button id="tab-upload" class="ui-tab" type="button">Upload</button>
     </nav>
   </div>
 
   <!-- Explorer -->
   <section id="panel-explorer" class="space-y-4">
     <div class="flex flex-wrap items-center gap-3">
-      <div class="flex items-center gap-2">
-        <label class="text-sm text-slate-600">Main folder</label>
-        <input id="bucketFilter" value="assets" class="border rounded-lg px-3 py-2" />
-      </div>
       <nav id="crumbs" class="flex items-center gap-1 text-sm"></nav>
       <div class="ml-auto flex items-center gap-2">
-        <button id="btnNewFolder" class="px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-sm">New folder</button>
-        <input id="q" class="border rounded-lg px-3 py-2" placeholder="Search files..." />
+        <button id="btnNewFolder" class="ui-btn light" type="button">New folder</button>
+        <input id="q" class="ui-input" placeholder="Search files..." />
       </div>
     </div>
 
-    <!-- Batch actions -->
+    <!-- Batch -->
     <div class="flex items-center gap-3">
       <label class="flex items-center gap-2 text-sm">
-        <input id="selAll" type="checkbox" class="rounded border-slate-300"> Select all
+        <input id="selAll" type="checkbox" class="ui-checkbox"> Select all
       </label>
-      <button id="actDelete" class="px-3 py-2 rounded-lg bg-red-600 text-white text-sm disabled:opacity-50" disabled>Delete selected</button>
-      <button id="actZip" class="px-3 py-2 rounded-lg bg-slate-900 text-white text-sm disabled:opacity-50" disabled>ZIP selected</button>
+      <button id="actDelete" class="ui-btn danger" type="button" disabled>Delete selected</button>
+      <button id="actZip" class="ui-btn" type="button" disabled>ZIP selected</button>
       <div class="text-xs text-slate-500" id="selCount">0 selected</div>
     </div>
 
+    <!-- Skeleton -->
+    <div id="skeleton" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 hidden" aria-hidden="true">
+      {% for i in "xxxxxxxxxxxx" %}<div class="ui-tile skeleton"></div>{% endfor %}
+    </div>
+
+    <!-- Grid -->
     <div id="grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3"></div>
     <div id="empty" class="hidden text-center text-slate-500 py-12">No items here.</div>
 
     <!-- Context Menu -->
-    <div id="ctx" class="hidden fixed bg-white border rounded-lg shadow text-sm overflow-hidden z-50">
-      <button data-act="open" class="block w-full text-left px-3 py-2 hover:bg-slate-100">Open</button>
-      <button data-act="rename" class="block w-full text-left px-3 py-2 hover:bg-slate-100">Rename / Move</button>
-      <button data-act="copy" class="block w-full text-left px-3 py-2 hover:bg-slate-100">Copy link</button>
-      <button data-act="delete" class="block w-full text-left px-3 py-2 text-red-600 hover:bg-red-50">Delete</button>
+    <div id="ctx" class="ui-menu hidden">
+      <button data-act="open" class="ui-menu-item" type="button">Open</button>
+      <button data-act="rename" class="ui-menu-item" type="button">Rename / Move</button>
+      <button data-act="copy" class="ui-menu-item" type="button">Copy link</button>
+      <button data-act="delete" class="ui-menu-item danger" type="button">Delete</button>
     </div>
   </section>
 
   <!-- Upload -->
   <section id="panel-upload" class="hidden">
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div class="lg:col-span-1 bg-white rounded-2xl p-6 shadow">
+      <div class="lg:col-span-1 ui-card">
         <h2 class="font-semibold text-lg mb-4">Upload files</h2>
-        <div class="mb-3">
-          <label class="block text-sm text-slate-600 mb-1">Main folder</label>
-          <input id="bucket" value="assets" class="w-full border rounded-lg px-3 py-2" />
-        </div>
         <div class="mb-4 text-xs text-slate-500">
           Target path is the <strong>current Explorer path</strong>:
           <div>Current: <span id="currentPathHint" class="font-mono">/</span></div>
         </div>
-        <div id="drop" class="border-2 border-dashed rounded-xl p-6 text-center hover:bg-slate-50">
+        <div id="drop" class="ui-dropzone" tabindex="0">
           <p class="text-sm text-slate-600 mb-3">Drag & drop files here</p>
           <div class="flex flex-col gap-2 items-center">
-            <label class="cursor-pointer px-3 py-2 rounded-lg bg-slate-900 text-white text-sm">
+            <label class="ui-btn" aria-label="Choose files">
               Choose files
               <input id="files" type="file" multiple class="hidden" />
             </label>
-            <label class="cursor-pointer px-3 py-2 rounded-lg bg-slate-700 text-white text-sm">
+            <label class="ui-btn secondary" aria-label="Choose folder">
               Choose a folder (experimental)
               <input id="folder" type="file" webkitdirectory directory class="hidden" />
             </label>
@@ -101,11 +96,11 @@
           <p id="extInfo" class="mt-3 text-xs text-slate-500">Allowed: loading…</p>
         </div>
         <div class="mt-4">
-          <button id="startUpload" class="w-full rounded-lg bg-slate-900 text-white py-2">Start upload</button>
+          <button id="startUpload" class="ui-btn w-full" type="button">Start upload</button>
         </div>
       </div>
 
-      <div class="lg:col-span-2 bg-white rounded-2xl p-6 shadow">
+      <div class="lg:col-span-2 ui-card">
         <h3 class="font-semibold mb-4">Upload status</h3>
         <div id="queue" class="space-y-2 text-sm"></div>
         <div id="queueEmpty" class="text-slate-500 text-sm">No files in queue.</div>
@@ -114,12 +109,4 @@
   </section>
 </div>
 
-<style>
-  .tab.active { color:#0f172a }
-  .tile { background:#fff; border-radius:0.75rem; padding:0.75rem; box-shadow:0 10px 25px rgba(0,0,0,.06); transition:.2s; }
-  .tile:hover { box-shadow:0 12px 28px rgba(0,0,0,.09); }
-</style>
-
-<!-- Load the external JS -->
-<script src="{% static 'js/dashboard.js' %}"></script>
 {% endblock %}

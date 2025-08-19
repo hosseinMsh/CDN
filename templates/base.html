@@ -7,6 +7,27 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>{% block title %}EdgeCDN{% endblock %}</title>
     <script src="{% static 'js/tailwindcss.js' %}"></script>
+  <link rel="stylesheet" href="{% static 'css/style.css' %}">
+
 </head>
-<body class="bg-slate-50 text-slate-900">{% block body %}{% endblock %}</body>
+<body class="bg-slate-50 text-slate-900">
+  {% block body %}{% endblock %}
+
+  <!-- Global Modal -->
+  <div id="modal" class="ui-modal hidden" aria-hidden="true">
+    <div class="ui-modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <h3 id="modalTitle" class="ui-modal-title"></h3>
+      <p id="modalText" class="ui-modal-text"></p>
+      <input id="modalInput" class="ui-input hidden" />
+      <div class="ui-modal-actions">
+        <button id="modalCancel" class="ui-btn light" type="button">Cancel</button>
+        <button id="modalOk" class="ui-btn" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Global Toast -->
+  <div id="toast" class="ui-toast hidden" role="status"></div>
+</body>
+<script src="{% static 'js/dashboard.js' %}"></script>
 </html>
