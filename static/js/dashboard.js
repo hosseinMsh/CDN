@@ -1,5 +1,5 @@
 // ===== Feature toggles =====
-const FEATURE_THUMBS = false;     // اگر thumbnail سروری ساختی، true کن
+const FEATURE_THUMBS = false;
 
 // ===== Utilities =====
 const $ = (s, r=document) => r.querySelector(s);
