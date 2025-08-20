@@ -1,24 +1,38 @@
-// ===== Feature toggles =====
-const FEATURE_THUMBS = false;
+/* =========================
+   EdgeCDN Dashboard (UI)
+   - Tree + Explorer
+   - Single-click folder nav, rename/move, delete (empty/recursive)
+   - Robust fetch, skeleton, modal/toast
+   - Context menu (dynamic for file/folder)
+   - Batch actions + upload (files/folders) + search
+   ========================= */
 
-// ===== Utilities =====
+// ---------- Feature toggles ----------
+const FEATURE_THUMBS = false; // set true if /api/thumb exists
+
+// ---------- Utilities ----------
 const $ = (s, r=document) => r.querySelector(s);
 const fmtSize = n => { const u=['B','KB','MB','GB','TB']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++} return (i? n.toFixed(1):n)+' '+u[i]; };
 const pct = (a,b) => b? Math.min(100, Math.round(a/b*100)) : 0;
 const joinPath = (...p) => p.filter(Boolean).join('/');
 const debounce = (fn,t)=>{ let id; return (...a)=>{ clearTimeout(id); id=setTimeout(()=>fn(...a),t);} };
+async function fetchJson(url, opts={}) {
+  const res = await fetch(url, { headers: { 'Accept': 'application/json' }, ...opts });
+  if (res.status === 204) return { ok: true };
+  const text = await res.text();
+  try { return JSON.parse(text); } catch { return { ok: false, __raw: text }; }
+}
 
-// ===== State =====
+// ---------- Global state ----------
 let currentPath = '';
 let selected = new Set();
 let cacheFolders = [];
 let cacheFiles = [];
 let spaces = [];
 let currentSpaceId = null;
-let ctxTarget = null;
-let navLock = false; // جلوگیری از کلیک‌های پیاپی تا اتمام browse
+let navLock = false;
 
-// ===== Modal / Toast =====
+// ---------- Modal / Toast ----------
 const modal = $('#modal'), modalTitle = $('#modalTitle'), modalText = $('#modalText'),
       modalInput = $('#modalInput'), modalOk = $('#modalOk'), modalCancel = $('#modalCancel'),
       toast = $('#toast');
@@ -36,14 +50,14 @@ function showModal({title, text, withInput=false, placeholder='', okText='OK', d
   return new Promise((resolve)=> { modalResolve = resolve; });
 }
 function closeModal(val=null){ modal.classList.add('hidden'); if (modalResolve){ modalResolve(val); modalResolve=null; } }
-modalOk.addEventListener('click', ()=> closeModal(modalInput.classList.contains('hidden') ? true : modalInput.value.trim()));
-modalCancel.addEventListener('click', ()=> closeModal(null));
-modal.addEventListener('click', (e)=> { if(e.target===modal) closeModal(null); });
+modalOk?.addEventListener('click', ()=> closeModal(modalInput.classList.contains('hidden') ? true : modalInput.value.trim()));
+modalCancel?.addEventListener('click', ()=> closeModal(null));
+modal?.addEventListener('click', (e)=> { if(e.target===modal) closeModal(null); });
 document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeModal(null); });
 
 function showToast(message, ms=2200){ toast.textContent = message; toast.classList.remove('hidden'); setTimeout(()=> toast.classList.add('hidden'), ms); }
 
-// ===== Tabs =====
+// ---------- Tabs ----------
 const tabExplorer=$('#tab-explorer'), tabUpload=$('#tab-upload'), panelExplorer=$('#panel-explorer'), panelUpload=$('#panel-upload');
 function switchTab(name){
   const ex = name==='explorer';
@@ -56,10 +70,10 @@ function switchTab(name){
 tabExplorer?.addEventListener('click', ()=>switchTab('explorer'));
 tabUpload?.addEventListener('click', ()=>switchTab('upload'));
 
-// ===== Spaces + usage =====
+// ---------- Spaces + usage ----------
 async function loadSpaces(){
-  const r = await fetch('/api/spaces'); const j = await r.json().catch(()=>({ok:false}));
-  if(!j.ok){ showToast('Failed to load spaces'); return; }
+  const j = await fetchJson('/api/spaces');
+  if(!j || (!j.ok && !Array.isArray(j.items))){ showToast('Failed to load spaces'); return; }
   spaces = j.items || [];
   const sel = $('#spaceSel'); sel.innerHTML = '';
   spaces.forEach(s=>{
@@ -76,16 +90,14 @@ function updateUsage(s){
 }
 $('#spaceSel')?.addEventListener('change', async (e)=>{
   const id = e.target.value;
-  const r = await fetch('/api/space/set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({space_id:id})});
-  const j = await r.json().catch(()=>({ok:false}));
-  if(!j.ok){ showToast('Failed to switch space'); return; }
+  const j = await fetchJson('/api/space/set',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({space_id:id})});
+  if(!j || !j.ok){ showToast('Failed to switch space'); return; }
   currentSpaceId = +id;
   const s = spaces.find(x=>x.id==id); if(s) updateUsage(s);
   currentPath=''; await reloadAll();
 });
 
-// ===== Explorer + Tree =====
-const grid = $('#grid'), emptyState = $('#empty'), crumbs = $('#crumbs'), skeleton = $('#skeleton');
+// ---------- Tree (folder sidebar) ----------
 const treeRoot = $('#treeRoot');
 
 function renderCrumbs(){
@@ -109,74 +121,114 @@ function renderCrumbs(){
 function makeTreeNode(relPath, name, isRoot=false){
   const node = document.createElement('div');
   node.className = 'node';
-  const fullPath = relPath ? joinPath(relPath, name) : name; // child path
+  const fullPath = relPath ? joinPath(relPath, name) : name;
   node.dataset.path = isRoot ? '' : fullPath;
-
-  node.innerHTML = `
-    <span class="caret">▸</span>
-    <span class="label">${isRoot ? '(root)' : name}</span>
-  `;
-
-  const caret = node.querySelector('.caret');
-  const label = node.querySelector('.label');
+  node.innerHTML = `<span class="caret">▸</span><span class="label">${isRoot ? '(root)' : name}</span>`;
 
   let expanded = false;
   let childrenWrap = null;
 
-  async function toggle(){
+  async function toggleNavigate(){
     if (navLock) return;
-    // single-click navigates to this node in Explorer
     currentPath = node.dataset.path || '';
     await browse();
-
-    // expand/collapse children list
+  }
+  async function toggleExpand(){
     if (!expanded) {
-      // build children container
       childrenWrap = document.createElement('div');
       childrenWrap.className = 'children';
       node.after(childrenWrap);
-      const j = await fetch(`/api/browse?rel_path=${encodeURIComponent(node.dataset.path || '')}`)
-                    .then(r=>r.json()).catch(()=>({ok:false}));
-      if(j.ok){
-        (j.folders||[]).forEach(fname=>{
-          const child = makeTreeNode(node.dataset.path || '', fname, false);
-          childrenWrap.appendChild(child);
-        });
+      const j = await fetchJson(`/api/browse?rel_path=${encodeURIComponent(node.dataset.path || '')}`);
+      if ((j.ok || j.folders || j.files) && Array.isArray(j.folders)) {
+        j.folders.forEach(fname => childrenWrap.appendChild(makeTreeNode(node.dataset.path || '', fname, false)));
       }
-      caret.textContent = '▾';
+      node.querySelector('.caret').textContent = '▾';
       expanded = true;
     } else {
-      caret.textContent = '▸';
+      node.querySelector('.caret').textContent = '▸';
       if (childrenWrap) { childrenWrap.remove(); childrenWrap = null; }
       expanded = false;
     }
   }
 
-  node.addEventListener('click', toggle);
-  node.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' ') { e.preventDefault(); toggle(); }});
+  node.addEventListener('click', async ()=>{
+    await toggleNavigate();
+    await toggleExpand();
+  });
+  node.addEventListener('keydown', async (e)=>{
+    if(e.key==='Enter'||e.key===' '){ e.preventDefault(); await toggleNavigate(); await toggleExpand(); }
+  });
   node.setAttribute('tabindex','0');
+
+  // Context menu for folder node
+  node.addEventListener('contextmenu', (e)=>{
+    e.preventDefault();
+    const name = isRoot ? '' : nameFromPath(node.dataset.path||'');
+    showContextMenu(e, { kind:'folder', name, rel_path: parentFromPath(node.dataset.path||'') });
+  });
 
   return node;
 }
 
-function buildTreeRoot(){
+function nameFromPath(p){ const parts=(p||'').split('/').filter(Boolean); return parts.length? parts[parts.length-1] : ''; }
+function parentFromPath(p){ const parts=(p||'').split('/').filter(Boolean); return parts.slice(0,-1).join('/'); }
+
+async function buildTreeRoot(){
   treeRoot.innerHTML = '';
-  treeRoot.appendChild(makeTreeNode('', '', true)); // root node
+  const root = makeTreeNode('', '', true);
+  treeRoot.appendChild(root);
+  const j = await fetchJson('/api/browse?rel_path=');
+  if ((j.ok || j.folders || j.files) && Array.isArray(j.folders)) {
+    const wrap = document.createElement('div');
+    wrap.className = 'children';
+    root.after(wrap);
+    j.folders.forEach(fname => wrap.appendChild(makeTreeNode('', fname, false)));
+    const caret = root.querySelector('.caret'); if (caret) caret.textContent = '▾';
+  }
 }
 
-// Folder tile (single-click)
+// ---------- Explorer ----------
+const grid = $('#grid'), emptyState = $('#empty'), crumbs = $('#crumbs'), skeleton = $('#skeleton');
+const ctx = $('#ctx'); // dynamic context menu container
+
+function renderCrumbs(){
+  crumbs.innerHTML = '';
+  const rootBtn = document.createElement('button');
+  rootBtn.className='px-2 py-1 rounded hover:bg-slate-100'; rootBtn.textContent='/';
+  rootBtn.addEventListener('click', ()=>{ currentPath=''; reloadAll(); });
+  crumbs.appendChild(rootBtn);
+  if(!currentPath) return;
+  const parts=currentPath.split('/'); let acc='';
+  parts.forEach((part, idx)=>{
+    const sep=document.createElement('span'); sep.textContent='›'; sep.className='px-1 text-slate-400'; crumbs.appendChild(sep);
+    acc=joinPath(acc,part);
+    const btn=document.createElement('button'); btn.className='px-2 py-1 rounded hover:bg-slate-100'; btn.textContent=part;
+    btn.addEventListener('click', ()=>{ currentPath=parts.slice(0, idx+1).join('/'); reloadAll(); });
+    crumbs.appendChild(btn);
+  });
+}
+
+// Build folder tile with dots + context menu
 function tileFolder(name){
   const el = document.createElement('div');
   el.className = 'ui-tile cursor-pointer';
   el.setAttribute('tabindex','0');
   el.innerHTML = `
+    <button class="dots" aria-label="More" type="button">⋮</button>
     <div class="thumb flex items-center justify-center text-2xl">📁</div>
     <div class="meta">
       <div class="mt-2 font-medium truncate" title="${name}">${name}</div>
       <div class="text-xs text-slate-500">Folder</div>
     </div>`;
-  el.addEventListener('click', ()=>{ if (navLock) return; currentPath = joinPath(currentPath, name); reloadAll(); });
+  el.addEventListener('click', (e)=>{ if(e.target.closest('.dots')) return; if (navLock) return; currentPath = joinPath(currentPath, name); reloadAll(); });
   el.addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); if(navLock) return; currentPath = joinPath(currentPath, name); reloadAll(); }});
+  el.querySelector('.dots').addEventListener('click', (e)=>{
+    showContextMenu(e, { kind:'folder', name, rel_path: currentPath });
+  });
+  el.addEventListener('contextmenu', (e)=>{
+    e.preventDefault();
+    showContextMenu(e, { kind:'folder', name, rel_path: currentPath });
+  });
   return el;
 }
 
@@ -209,7 +261,11 @@ function tileFile(a){
     if(e.target.checked) selected.add(n); else selected.delete(n);
     updateBatchUI();
   });
-  el.querySelector('.dots').addEventListener('click', (e)=> showMenu(e, a));
+  el.querySelector('.dots').addEventListener('click', (e)=> showContextMenu(e, { kind:'file', name:a.name, file:a }));
+  el.addEventListener('contextmenu', (e)=>{
+    e.preventDefault();
+    showContextMenu(e, { kind:'file', name:a.name, file:a });
+  });
   return el;
 }
 
@@ -220,33 +276,124 @@ function renderGrid(){
   emptyState.classList.toggle('hidden', !!(cacheFolders.length || cacheFiles.length));
 }
 
-const ctx = $('#ctx');
-function showMenu(ev, file){
+// ---------- Dynamic context menu ----------
+function showContextMenu(ev, payload){
   ev.stopPropagation();
-  ctxTarget = file;
-  ctx.style.left = ev.clientX + 'px';
-  ctx.style.top  = ev.clientY + 'px';
+  const {clientX:x, clientY:y} = ev;
+  // Build menu based on kind
+  if (payload.kind === 'folder') {
+    ctx.innerHTML = `
+      <button class="ui-menu-item" data-act="open">Open</button>
+      <button class="ui-menu-item" data-act="f-rename">Rename / Move</button>
+      <button class="ui-menu-item" data-act="f-delete-empty">Delete (if empty)</button>
+      <button class="ui-menu-item danger" data-act="f-delete-rec">Delete (with contents)</button>
+    `;
+    ctx.dataset.kind = 'folder';
+    ctx.dataset.name = payload.name || '';
+    ctx.dataset.rel = payload.rel_path || '';
+  } else {
+    // file menu
+    ctx.innerHTML = `
+      <button class="ui-menu-item" data-act="open">Open</button>
+      <button class="ui-menu-item" data-act="rename">Rename / Move</button>
+      <button class="ui-menu-item" data-act="copy">Copy link</button>
+      <button class="ui-menu-item danger" data-act="delete">Delete</button>
+    `;
+    ctx.dataset.kind = 'file';
+    ctx.dataset.name = payload.name || '';
+    ctx.dataset.rel = currentPath || '';
+  }
+  ctx.style.left = x + 'px'; ctx.style.top = y + 'px';
   ctx.classList.remove('hidden');
+  // stash for handlers
+  ctx._payload = payload;
 }
 document.addEventListener('click', ()=> ctx.classList.add('hidden'));
-ctx.addEventListener('click', async (e)=>{
-  const act = e.target.dataset.act; if(!act || !ctxTarget) return;
+ctx?.addEventListener('click', async (e)=>{
+  const act = e.target.dataset.act; if(!act) return;
+  const kind = ctx.dataset.kind;
+  const name = ctx.dataset.name;
+  const rel  = ctx.dataset.rel;
   ctx.classList.add('hidden');
-  if(act==='open'){ window.open(ctxTarget.url, '_blank'); }
-  if(act==='copy'){ await navigator.clipboard.writeText(location.origin + ctxTarget.url); showToast('Link copied'); }
-  if(act==='delete'){ await deleteFile(ctxTarget.name); }
-  if(act==='rename'){ await renameFile(ctxTarget.name); }
+
+  if (kind === 'folder') {
+    if (act === 'open') { currentPath = rel ? joinPath(rel, name) : name; await reloadAll(); return; }
+    if (act === 'f-rename') { await renameFolder(rel, name); return; }
+    if (act === 'f-delete-empty') { await deleteFolder(rel, name, false); return; }
+    if (act === 'f-delete-rec') { await deleteFolder(rel, name, true); return; }
+  } else {
+    // file actions
+    const payload = ctx._payload || {};
+    if (act === 'open') { window.open(payload.file?.url, '_blank'); }
+    if (act === 'copy') { await navigator.clipboard.writeText(location.origin + (payload.file?.url || '')); showToast('Link copied'); }
+    if (act === 'delete') { await deleteFile(name); }
+    if (act === 'rename') { await renameFile(name); }
+  }
 });
 
+// ---------- Folder ops ----------
+async function renameFolder(relPath, oldName){
+  const newName = await showModal({title:'Rename / Move Folder', text:'New folder name:', withInput:true, placeholder:oldName, okText:'Next'});
+  if(newName===null) return;
+  const newRel = await showModal({title:'Move (optional)', text:'New parent relative path (empty = current):', withInput:true, placeholder:relPath || '', okText:'Apply'});
+  const body = {
+    old_rel_path: relPath || '',
+    name: oldName,
+    new_rel_path: (newRel||relPath||''),
+    new_name: (newName||oldName)
+  };
+  const j = await fetchJson('/api/folder/move',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  if(!j.ok){ showToast('Folder rename/move failed'); return; }
+  showToast('Folder updated'); await reloadAll();
+}
+
+async function deleteFolder(relPath, name, recursive){
+  const confirmText = recursive
+    ? `Type DELETE to remove "${name}" and ALL contents`
+    : `Delete folder "${name}" (must be empty). Press OK to continue`;
+  const val = await showModal({title:'Delete folder', text:confirmText, withInput: recursive, okText: recursive?'Delete':'OK', danger:true});
+  if(recursive){
+    if(val !== 'DELETE') return;
+  } else {
+    if(val === null) return;
+  }
+  const path = joinPath(relPath||'', name);
+  const url = `/api/rmdir?rel_path=${encodeURIComponent(path)}&recursive=${recursive?1:0}`;
+  const j = await fetchJson(url, { method:'DELETE' });
+  if(!j.ok){ showToast(j.error || 'Folder delete failed'); return; }
+  showToast('Folder deleted'); await reloadAll();
+}
+
+// ---------- File ops ----------
+async function renameFile(oldName){
+  const newName = await showModal({title:'Rename / Move', text:'Enter new name:', withInput:true, placeholder:oldName, okText:'Next'});
+  if(newName===null) return;
+  const newPath = await showModal({title:'Move (optional)', text:'Enter new relative path (empty = stay here):', withInput:true, placeholder: currentPath || '', okText:'Apply'});
+  const body = { old_rel_path: currentPath, old_name: oldName, new_rel_path: (newPath||currentPath), new_name: (newName || oldName) };
+  const j = await fetchJson('/api/rename',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  if(!j.ok){ showToast('Rename failed'); return; }
+  showToast('Renamed'); await reloadAll();
+}
+
+async function deleteFile(name){
+  const ok = await showModal({title:'Delete file', text:`Delete "${name}"?`, okText:'Delete', danger:true});
+  if(!ok) return;
+  const j = await fetchJson('/api/delete',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({rel_path: currentPath, name})});
+  if(!j.ok){ showToast('Delete failed'); return; }
+  showToast('Deleted');
+  await loadSpaces(); await reloadAll();
+}
+
+// ---------- Browse / reload ----------
 async function browse(){
   if (navLock) return;
   navLock = true;
   $('#skeleton').classList.remove('hidden'); grid.innerHTML=''; emptyState.classList.add('hidden');
   try{
-    const r = await fetch(`/api/browse?rel_path=${encodeURIComponent(currentPath)}`);
-    const j = await r.json();
-    if(!j.ok){ showToast('Failed to load folder'); return; }
-    cacheFolders = j.folders||[]; cacheFiles = j.files||[];
+    const j = await fetchJson(`/api/browse?rel_path=${encodeURIComponent(currentPath)}`);
+    if (!(j.ok || j.folders || j.files)) { showToast('Failed to load folder'); return; }
+    cacheFolders = Array.isArray(j.folders) ? j.folders : [];
+    cacheFiles   = Array.isArray(j.files)   ? j.files   : [];
     selected.clear(); updateBatchUI();
     renderCrumbs(); renderGrid();
   } finally {
@@ -257,12 +404,10 @@ async function browse(){
 
 async function reloadAll(){
   await browse();
-  // sync tree UI: expand ancestors (simple approach: rebuild root; user می‌تواند دوباره باز کند)
-  // برای سادگی فعلاً فقط رفرش روت:
-  buildTreeRoot();
+  await buildTreeRoot();
 }
 
-// Batch / Toolbar
+// ---------- Batch / Toolbar ----------
 function updateBatchUI(){
   $('#selCount').textContent = `${selected.size} selected`;
   $('#actDelete').disabled = selected.size===0;
@@ -274,13 +419,11 @@ $('#selAll')?.addEventListener('change', e=>{
   renderGrid(); updateBatchUI();
 });
 
-// Actions
 $('#btnNewFolder')?.addEventListener('click', async ()=>{
   const name = await showModal({title:'New folder', text:'Enter folder name', withInput:true, placeholder:'MyFolder', okText:'Create'});
   if(!name) return;
-  const r = await fetch('/api/mkdir',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({rel_path: currentPath, name})});
-  const j = await r.json().catch(()=>({ok:false}));
-  if(!j.ok){ showToast('Create folder failed'); return; }
+  const j = await fetchJson('/api/mkdir',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({rel_path: currentPath, name})});
+  if(!j.ok){ showToast(j.error || 'Create folder failed'); return; }
   showToast('Folder created'); await reloadAll();
 });
 
@@ -308,9 +451,9 @@ async function deleteFile(name){
 $('#actZip')?.addEventListener('click', async ()=>{
   if(!selected.size) return;
   const items = Array.from(selected).map(n=>({rel_path: currentPath, name:n}));
-  const r = await fetch('/api/zip',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({items})});
-  if(!r.ok){ showToast('ZIP failed'); return; }
-  const blob = await r.blob(); const url = URL.createObjectURL(blob);
+  const res = await fetch('/api/zip',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({items})});
+  if(!res.ok){ showToast('ZIP failed'); return; }
+  const blob = await res.blob(); const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href=url; a.download='download.zip'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
 });
 
@@ -319,33 +462,32 @@ $('#actDelete')?.addEventListener('click', async ()=>{
   const ok = await showModal({title:'Delete selected', text:`Delete ${selected.size} files?`, okText:'Delete', danger:true});
   if(!ok) return;
   const items = Array.from(selected).map(n=>({rel_path: currentPath, name:n}));
-  const r = await fetch('/api/delete-batch',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({items})});
-  const j = await r.json().catch(()=>({ok:false}));
+  const j = await fetchJson('/api/delete-batch',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({items})});
   if(!j.ok) showToast('Batch delete failed'); else showToast(`Deleted ${j.deleted}, failed ${j.failed}`);
   await loadSpaces(); await reloadAll();
 });
 
-// Search
+// ---------- Search ----------
 $('#q')?.addEventListener('input', debounce(listSearch,300));
 async function listSearch(){
   const q = $('#q').value.trim();
   if(!q){ return reloadAll(); }
   $('#skeleton').classList.remove('hidden'); grid.innerHTML='';
-  const r = await fetch('/api/assets?q=' + encodeURIComponent(q)); const j = await r.json().catch(()=>({ok:false}));
+  const j = await fetchJson('/api/assets?q=' + encodeURIComponent(q));
   $('#skeleton').classList.add('hidden');
-  if(!j.ok){ showToast('Search failed'); return; }
-  cacheFolders=[]; cacheFiles = j.items.map(x=>({name:x.original_name,size:x.size,mime:x.mime,url:x.url}));
+  if(!(j.ok || j.items)){ showToast('Search failed'); return; }
+  cacheFolders=[]; cacheFiles = (j.items||[]).map(x=>({name:x.original_name,size:x.size,mime:x.mime,url:x.url}));
   selected.clear(); updateBatchUI(); renderCrumbs(); renderGrid();
 }
 
-// Uploads
+// ---------- Uploads ----------
 const drop=$('#drop'), filesInput=$('#files'), folderInput=$('#folder');
 const queueList=$('#queue'), queueEmpty=$('#queueEmpty'), startBtn=$('#startUpload');
 let uploadQueue=[]; let running=false;
 
 function addToQueue(file, relPath){
   uploadQueue.push({file, rel_path: relPath || currentPath});
-  queueEmpty.classList.add('hidden');
+  queueEmpty?.classList.add('hidden');
   const row=document.createElement('div');
   row.className='border rounded-lg p-2'; row.dataset.name=file.name;
   row.innerHTML=`
@@ -357,10 +499,10 @@ function addToQueue(file, relPath){
       <div class="text-xs" data-status>queued</div>
     </div>
     <div class="ui-progress mt-2"><div class="ui-progress-bar" data-bar style="width:0%"></div></div>`;
-  queueList.appendChild(row);
+  queueList?.appendChild(row);
 }
 function setRow(name, {text, pct, cls}){
-  const row = queueList.querySelector(`div[data-name="${CSS.escape(name)}"]`); if(!row) return;
+  const row = queueList?.querySelector(`div[data-name="${CSS.escape(name)}"]`); if(!row) return;
   if(text!=null){ const st=row.querySelector('[data-status]'); st.textContent=text; st.className='text-xs '+(cls||''); }
   if(pct!=null){ row.querySelector('[data-bar]').style.width = Math.max(0,Math.min(100,pct))+'%'; }
 }
@@ -403,7 +545,22 @@ $('#startUpload')?.addEventListener('click', async ()=>{
   await loadSpaces(); await reloadAll();
 });
 
-// Init
+// ---------- Allowed extensions badge ----------
+async function loadAllowedExts(){
+  const badge = $('#allowedBadge');
+  const info  = $('#extInfo');
+  const j = await fetchJson('/api/allowed-extensions');
+  if ((j.ok || j.items) && Array.isArray(j.items) && j.items.length) {
+    const list = j.items.join(', ');
+    if (badge){ badge.textContent = `Allowed: ${list}`; badge.classList.remove('hidden'); }
+    if (info){ info.textContent  = `Allowed: ${list}`; }
+  } else {
+    if (badge){ badge.textContent = 'Allowed: (error)'; badge.classList.remove('hidden'); }
+    if (info){ info.textContent  = 'Allowed: (error)'; }
+  }
+}
+
+// ---------- Init ----------
 async function init(){
   await loadSpaces();
   switchTab('explorer');

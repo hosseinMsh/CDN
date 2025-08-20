@@ -1,6 +1,6 @@
 from django.urls import path
-from core.views import dashboard, api_upload, api_assets, api_allowed_extensions, api_zip, api_browse, \
-    api_mkdir, api_rename, api_delete, api_delete_batch, api_space_set, api_spaces
+from core.views import api_upload, api_assets, api_allowed_extensions, api_zip, api_browse, \
+    api_mkdir, api_rename, api_delete, api_delete_batch, api_space_set, api_spaces, api_rmdir, api_folder_move
 
 urlpatterns = [
 
@@ -14,7 +14,9 @@ urlpatterns = [
     path('upload', api_upload, name='api_upload'),
     path('zip', api_zip, name='api_zip'),
 
-    path('mkdir', api_mkdir, name='api_mkdir'),
+    path('api/mkdir', api_mkdir, name='api_mkdir'),
+    path('api/rmdir', api_rmdir, name='api_rmdir'),
+    path('api/folder/move', api_folder_move, name='api_folder_move'),
     path('rename', api_rename, name='api_rename'),
     path('delete', api_delete, name='api_delete'),
     path('delete-batch', api_delete_batch, name='api_delete_batch'),

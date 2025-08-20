@@ -40,6 +40,11 @@ def ns_base(space: Space) -> Path:
     p.mkdir(parents=True, exist_ok=True)
     return p
 
+def fs_space_root(space) -> Path:
+    """Physical base path of the current space."""
+    # Adjust to your layout; earlier you used settings.CDN_ROOT/<user>/<space>
+    return Path(settings.CDN_ROOT) / space.owner.name_spase / space.slug
+
 def fs_base(space: Space, rel_path: str = '') -> Path:
     base = ns_base(space)
     if rel_path:

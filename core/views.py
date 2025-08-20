@@ -1,5 +1,5 @@
 from __future__ import annotations
-import io, os, json, zipfile
+import io, os, json, zipfile, shutil
 from django.db import transaction
 from django.db.models import Q, F
 from django.conf import settings
@@ -7,12 +7,12 @@ from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse, HttpResponseBadRequest, StreamingHttpResponse, HttpResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 from .models import AllowedExtension, Space, Asset
 from .utils import (
     safe_filename, extract_extension, sanitize_rel_path, safe_folder_name,
-    build_storage_path, ensure_unique, guess_mime, fs_base
+    build_storage_path, ensure_unique, guess_mime, fs_base, fs_space_root
 )
 
 # ---------- helpers ----------
@@ -128,21 +128,134 @@ def api_allowed_extensions(request):
     exts = AllowedExtension.objects.filter(enabled=True).order_by('ext')
     return JsonResponse({'ok': True, 'items': [f".{e.ext}" for e in exts]})
 
-# ---------- mkdir / rename / delete (single) ----------
-
+# ---------- API: create folder ----------
+@csrf_exempt
 @login_required
 @require_POST
-@csrf_exempt
 def api_mkdir(request):
+    """
+    POST /api/mkdir
+    Body JSON: { "rel_path": "<parent/rel/path>", "name": "<folderName>" }
+    Creates a folder under the given relative path.
+    """
+    space = get_current_space(request)  # your existing helper
+    if not space:
+        return JsonResponse({'ok': False, 'error': 'no space'}, status=400)
+
+    try:
+        data = json.loads(request.body.decode('utf-8') or "{}")
+        rel = sanitize_rel_path(data.get('rel_path') or '')
+        name = safe_folder_name(data.get('name') or '')
+    except Exception:
+        return JsonResponse({'ok': False, 'error': 'bad request'}, status=400)
+
+    parent = fs_base(space, rel)
+    target = parent / name
+
+    # Ensure parent is inside space root
+    root = fs_space_root(space)
+    try:
+        parent.mkdir(parents=True, exist_ok=True)  # ensure parent exists
+        # Check traversal: target must start with root
+        if not str(target.resolve()).startswith(str(root.resolve())):
+            return JsonResponse({'ok': False, 'error': 'invalid path'}, status=400)
+        if target.exists():
+            return JsonResponse({'ok': False, 'error': 'folder exists'}, status=409)
+        target.mkdir(exist_ok=False)
+        return JsonResponse({'ok': True}, status=201)
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=500)
+
+# ---------- API: remove folder ----------
+@csrf_exempt
+@login_required
+@require_http_methods(["DELETE"])
+def api_rmdir(request):
+    """
+    DELETE /api/rmdir?rel_path=<folder/relative/path>&recursive=1
+    - If recursive=1: delete folder and all contents.
+    - Else: remove only if empty.
+    """
     space = get_current_space(request)
-    if not space: return JsonResponse({'ok': False, 'error': 'no space'}, status=400)
-    data = json.loads(request.body.decode('utf-8'))
-    rel = sanitize_rel_path(data.get('rel_path') or '')
-    name = safe_folder_name(data.get('name') or '')
-    target = fs_base(space, rel) / name
-    if target.exists(): return JsonResponse({'ok': False, 'error': 'folder exists'}, status=409)
-    target.mkdir(parents=True, exist_ok=False)
-    return JsonResponse({'ok': True})
+    if not space:
+        return JsonResponse({'ok': False, 'error': 'no space'}, status=400)
+
+    rel = sanitize_rel_path(request.GET.get('rel_path') or '')
+    recursive = (request.GET.get('recursive') == '1')
+
+    # Prevent deleting space root
+    if not rel:
+        return JsonResponse({'ok': False, 'error': 'cannot delete space root'}, status=400)
+
+    target = fs_base(space, rel)
+    root = fs_space_root(space)
+    try:
+        if not target.exists():
+            return JsonResponse({'ok': False, 'error': 'not found'}, status=404)
+        if not str(target.resolve()).startswith(str(root.resolve())):
+            return JsonResponse({'ok': False, 'error': 'invalid path'}, status=400)
+
+        if recursive:
+            shutil.rmtree(target)
+        else:
+            target.rmdir()  # raises OSError if not empty
+        return JsonResponse({'ok': True})
+    except OSError as e:
+        # not empty / permission etc.
+        return JsonResponse({'ok': False, 'error': str(e)}, status=400)
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=500)
+
+# ---------- API: move/rename folder ----------
+@csrf_exempt
+@login_required
+@require_POST
+def api_folder_move(request):
+    """
+    POST /api/folder/move
+    Body JSON: {
+      "old_rel_path": "<parent/rel>", "name": "<oldFolder>",
+      "new_rel_path": "<new/parent/rel>", "new_name": "<newFolderName>"
+    }
+    """
+    space = get_current_space(request)
+    if not space:
+        return JsonResponse({'ok': False, 'error': 'no space'}, status=400)
+
+    try:
+        data = json.loads(request.body.decode('utf-8') or "{}")
+        old_rel = sanitize_rel_path(data.get('old_rel_path') or '')
+        new_rel = sanitize_rel_path(data.get('new_rel_path') or '')
+        old_name = safe_folder_name(data.get('name') or '')
+        new_name = safe_folder_name(data.get('new_name') or old_name)
+    except Exception:
+        return JsonResponse({'ok': False, 'error': 'bad request'}, status=400)
+
+    src = fs_base(space, old_rel) / old_name
+    dst = fs_base(space, new_rel) / new_name
+
+    # forbid moving into itself or its subdir
+    try:
+        src_res = src.resolve()
+        dst_res = dst.resolve()
+        if not str(src_res).startswith(str(fs_space_root(space).resolve())):
+            return JsonResponse({'ok': False, 'error': 'invalid src'}, status=400)
+        if not str(dst_res).startswith(str(fs_space_root(space).resolve())):
+            return JsonResponse({'ok': False, 'error': 'invalid dst'}, status=400)
+        if str(dst_res).startswith(str(src_res) + os.sep):
+            return JsonResponse({'ok': False, 'error': 'cannot move into itself'}, status=400)
+
+        if not src.exists():
+            return JsonResponse({'ok': False, 'error': 'src not found'}, status=404)
+        if dst.exists():
+            return JsonResponse({'ok': False, 'error': 'dst exists'}, status=409)
+
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        return JsonResponse({'ok': True})
+    except Exception as e:
+        return JsonResponse({'ok': False, 'error': str(e)}, status=500)
+
 
 @login_required
 @require_POST
@@ -170,6 +283,7 @@ def api_rename(request):
     a.rel_path, a.original_name = new_rel, new_name
     a.save(update_fields=['rel_path', 'original_name'])
     return JsonResponse({'ok': True})
+
 
 @login_required
 @require_POST
